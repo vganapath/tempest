@@ -15,6 +15,8 @@
 
 import six
 
+from tempest_lib import decorators
+
 from tempest.api.network import base_security_groups as base
 from tempest.common.utils import data_utils
 from tempest import config
@@ -160,6 +162,7 @@ class SecGroupTest(base.BaseSecGroupTest):
                                                 port_range_min,
                                                 port_range_max)
 
+    @decorators.skip_because(bug='1364740')
     @test.idempotent_id('c9463db8-b44d-4f52-b6c0-8dbda99f26ce')
     def test_create_security_group_rule_with_icmp_type_code(self):
         """Verify security group rule for icmp protocol works.

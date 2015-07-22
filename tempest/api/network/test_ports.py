@@ -17,6 +17,8 @@ import socket
 
 import netaddr
 
+from tempest_lib import decorators
+
 from tempest.api.network import base
 from tempest.api.network import base_security_groups as sec_base
 from tempest.common import custom_matchers
@@ -151,6 +153,7 @@ class PortsTestJSON(sec_base.BaseSecGroupTest):
                  if port['id'] == self.port['id']]
         self.assertNotEmpty(ports, "Created port not found in the list")
 
+    @decorators.skip_because(bug='1476902')
     @test.idempotent_id('e7fe260b-1e79-4dd3-86d9-bec6a7959fc5')
     def test_port_list_filter_by_ip(self):
         # Create network and subnet
@@ -320,6 +323,7 @@ class PortsTestJSON(sec_base.BaseSecGroupTest):
         self.assertEqual(free_mac_address,
                          show_port['mac_address'])
 
+    @decorators.skip_because(bug='1476503')
     @test.attr(type='smoke')
     @test.idempotent_id('4179dcb9-1382-4ced-84fe-1b91c54f5735')
     def test_create_port_with_no_securitygroups(self):
