@@ -13,20 +13,27 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import urllib
+from six.moves.urllib import parse as urllib
 
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.common import service_client
 
 
-class DatabaseVersionsClientJSON(rest_client.RestClient):
+class DatabaseVersionsClient(service_client.ServiceClient):
 
-    def __init__(self, auth_provider):
-        super(DatabaseVersionsClientJSON, self).__init__(auth_provider)
+    def __init__(self, auth_provider, service, region,
+                 endpoint_type=None, build_interval=None, build_timeout=None,
+                 disable_ssl_certificate_validation=None, ca_certs=None,
+                 trace_requests=None):
+        dscv = disable_ssl_certificate_validation
+        super(DatabaseVersionsClient, self).__init__(
+            auth_provider, service, region,
+            endpoint_type=endpoint_type,
+            build_interval=build_interval,
+            build_timeout=build_timeout,
+            disable_ssl_certificate_validation=dscv,
+            ca_certs=ca_certs,
+            trace_requests=trace_requests)
         self.skip_path()
-        self.service = CONF.database.catalog_type
 
     def list_db_versions(self, params=None):
         """List all versions."""
@@ -35,4 +42,5 @@ class DatabaseVersionsClientJSON(rest_client.RestClient):
             url += '?%s' % urllib.urlencode(params)
 
         resp, body = self.get(url)
-        return resp, self._parse_resp(body)
+        self.expected_success(200, resp.status)
+        return service_client.ResponseBodyList(resp, self._parse_resp(body))

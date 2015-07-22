@@ -47,21 +47,40 @@ class HackingTestCase(base.TestCase):
     just assertTrue if the check is expected to fail and assertFalse if it
     should pass.
     """
-    def test_no_setupclass_for_unit_tests(self):
-        self.assertTrue(checks.no_setupclass_for_unit_tests(
+    def test_no_setup_teardown_class_for_tests(self):
+        self.assertTrue(checks.no_setup_teardown_class_for_tests(
             "  def setUpClass(cls):", './tempest/tests/fake_test.py'))
-        self.assertIsNone(checks.no_setupclass_for_unit_tests(
+        self.assertIsNone(checks.no_setup_teardown_class_for_tests(
             "  def setUpClass(cls): # noqa", './tempest/tests/fake_test.py'))
-        self.assertFalse(checks.no_setupclass_for_unit_tests(
+        self.assertTrue(checks.no_setup_teardown_class_for_tests(
             "  def setUpClass(cls):", './tempest/api/fake_test.py'))
+        self.assertTrue(checks.no_setup_teardown_class_for_tests(
+            "  def setUpClass(cls):", './tempest/scenario/fake_test.py'))
+        self.assertFalse(checks.no_setup_teardown_class_for_tests(
+            "  def setUpClass(cls):", './tempest/test.py'))
+        self.assertTrue(checks.no_setup_teardown_class_for_tests(
+            "  def tearDownClass(cls):", './tempest/tests/fake_test.py'))
+        self.assertIsNone(checks.no_setup_teardown_class_for_tests(
+            "  def tearDownClass(cls): # noqa", './tempest/tests/fake_test.py'))
+        self.assertTrue(checks.no_setup_teardown_class_for_tests(
+            "  def tearDownClass(cls):", './tempest/api/fake_test.py'))
+        self.assertTrue(checks.no_setup_teardown_class_for_tests(
+            "  def tearDownClass(cls):", './tempest/scenario/fake_test.py'))
+        self.assertFalse(checks.no_setup_teardown_class_for_tests(
+            "  def tearDownClass(cls):", './tempest/test.py'))
 
-    def test_import_no_clients_in_api(self):
+    def test_import_no_clients_in_api_and_scenario_tests(self):
         for client in checks.PYTHON_CLIENTS:
             string = "import " + client + "client"
-            self.assertTrue(checks.import_no_clients_in_api(
-                string, './tempest/api/fake_test.py'))
-            self.assertFalse(checks.import_no_clients_in_api(
-                string, './tempest/scenario/fake_test.py'))
+            self.assertTrue(
+                checks.import_no_clients_in_api_and_scenario_tests(
+                    string, './tempest/api/fake_test.py'))
+            self.assertTrue(
+                checks.import_no_clients_in_api_and_scenario_tests(
+                    string, './tempest/scenario/fake_test.py'))
+            self.assertFalse(
+                checks.import_no_clients_in_api_and_scenario_tests(
+                    string, './tempest/test.py'))
 
     def test_scenario_tests_need_service_tags(self):
         self.assertFalse(checks.scenario_tests_need_service_tags(
@@ -70,9 +89,15 @@ class HackingTestCase(base.TestCase):
         self.assertFalse(checks.scenario_tests_need_service_tags(
             'def test_fake_test:', './tempest/api/compute/test_fake.py',
             "@test.services('image')"))
+        self.assertFalse(checks.scenario_tests_need_service_tags(
+            'def test_fake:', './tempest/scenario/orchestration/test_fake.py',
+            "@test.services('compute')"))
         self.assertTrue(checks.scenario_tests_need_service_tags(
             'def test_fake_test:', './tempest/scenario/test_fake.py',
             '\n'))
+        self.assertTrue(checks.scenario_tests_need_service_tags(
+            'def test_fake:', './tempest/scenario/orchestration/test_fake.py',
+            "\n"))
 
     def test_no_vi_headers(self):
         # NOTE(mtreinish)  The lines parameter is used only for finding the
@@ -93,3 +118,23 @@ class HackingTestCase(base.TestCase):
             './tempest/scenario/compute/fake_test.py'))
         self.assertFalse(checks.service_tags_not_in_module_path(
             "@test.services('compute')", './tempest/api/image/fake_test.py'))
+
+    def test_no_hyphen_at_end_of_rand_name(self):
+        self.assertIsNone(checks.no_hyphen_at_end_of_rand_name(
+            'data_utils.rand_name("fake-resource")', './tempest/test_foo.py'))
+        self.assertEqual(2, len(list(checks.no_hyphen_at_end_of_rand_name(
+            'data_utils.rand_name("fake-resource-")', './tempest/test_foo.py')
+        )))
+
+    def test_no_mutable_default_args(self):
+        self.assertEqual(1, len(list(checks.no_mutable_default_args(
+            " def function1(para={}):"))))
+
+        self.assertEqual(1, len(list(checks.no_mutable_default_args(
+            "def function2(para1, para2, para3=[])"))))
+
+        self.assertEqual(0, len(list(checks.no_mutable_default_args(
+            "defined = []"))))
+
+        self.assertEqual(0, len(list(checks.no_mutable_default_args(
+            "defined, undefined = [], {}"))))

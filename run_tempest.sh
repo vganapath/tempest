@@ -20,7 +20,7 @@ function usage {
 }
 
 testrargs=""
-venv=.venv
+venv=${VENV:-.venv}
 with_venv=tools/with_venv.sh
 serial=0
 always_venv=0
@@ -58,7 +58,7 @@ while [ $# -gt 0 ]; do
     -l|--logging) logging=1;;
     -L|--logging-config) logging_config=$2; shift;;
     --) [ "yes" == "$first_uu" ] || testrargs="$testrargs $1"; first_uu=no  ;;
-    *) testrargs+="$testrargs $1";;
+    *) testrargs="$testrargs $1";;
   esac
   shift
 done

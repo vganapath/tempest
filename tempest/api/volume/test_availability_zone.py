@@ -17,25 +17,23 @@ from tempest.api.volume import base
 from tempest import test
 
 
-class AvailabilityZoneTestJSON(base.BaseVolumeV1Test):
+class AvailabilityZoneV2TestJSON(base.BaseVolumeTest):
 
     """
-    Tests Availability Zone API List
+    Tests Availability Zone V2 API List
     """
-    _interface = 'json'
 
     @classmethod
-    def setUpClass(cls):
-        super(AvailabilityZoneTestJSON, cls).setUpClass()
+    def setup_clients(cls):
+        super(AvailabilityZoneV2TestJSON, cls).setup_clients()
         cls.client = cls.availability_zone_client
 
-    @test.attr(type='gate')
+    @test.idempotent_id('01f1ae88-eba9-4c6b-a011-6f7ace06b725')
     def test_get_availability_zone_list(self):
         # List of availability zone
-        resp, availability_zone = self.client.get_availability_zone_list()
-        self.assertEqual(200, resp.status)
+        availability_zone = self.client.list_availability_zones()
         self.assertTrue(len(availability_zone) > 0)
 
 
-class AvailabilityZoneTestXML(AvailabilityZoneTestJSON):
-    _interface = 'xml'
+class AvailabilityZoneV1TestJSON(AvailabilityZoneV2TestJSON):
+    _api_version = 1

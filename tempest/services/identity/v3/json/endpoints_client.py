@@ -13,27 +13,20 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
+from oslo_serialization import jsonutils as json
 
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.common import service_client
 
 
-class EndPointClientJSON(rest_client.RestClient):
-
-    def __init__(self, auth_provider):
-        super(EndPointClientJSON, self).__init__(auth_provider)
-        self.service = CONF.identity.catalog_type
-        self.endpoint_url = 'adminURL'
-        self.api_version = "v3"
+class EndPointClient(service_client.ServiceClient):
+    api_version = "v3"
 
     def list_endpoints(self):
         """GET endpoints."""
         resp, body = self.get('endpoints')
+        self.expected_success(200, resp.status)
         body = json.loads(body)
-        return resp, body['endpoints']
+        return service_client.ResponseBodyList(resp, body['endpoints'])
 
     def create_endpoint(self, service_id, interface, url, **kwargs):
         """Create endpoint.
@@ -56,8 +49,9 @@ class EndPointClientJSON(rest_client.RestClient):
         }
         post_body = json.dumps({'endpoint': post_body})
         resp, body = self.post('endpoints', post_body)
+        self.expected_success(201, resp.status)
         body = json.loads(body)
-        return resp, body['endpoint']
+        return service_client.ResponseBody(resp, body['endpoint'])
 
     def update_endpoint(self, endpoint_id, service_id=None, interface=None,
                         url=None, region=None, enabled=None, **kwargs):
@@ -82,10 +76,12 @@ class EndPointClientJSON(rest_client.RestClient):
             post_body['enabled'] = enabled
         post_body = json.dumps({'endpoint': post_body})
         resp, body = self.patch('endpoints/%s' % endpoint_id, post_body)
+        self.expected_success(200, resp.status)
         body = json.loads(body)
-        return resp, body['endpoint']
+        return service_client.ResponseBody(resp, body['endpoint'])
 
     def delete_endpoint(self, endpoint_id):
         """Delete endpoint."""
         resp_header, resp_body = self.delete('endpoints/%s' % endpoint_id)
-        return resp_header, resp_body
+        self.expected_success(204, resp_header.status)
+        return service_client.ResponseBody(resp_header, resp_body)

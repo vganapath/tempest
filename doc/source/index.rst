@@ -1,8 +1,3 @@
-.. Tempest documentation master file, created by
-   sphinx-quickstart on Tue May 21 17:43:32 2013.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
 =======================
 Tempest Testing Project
 =======================
@@ -14,6 +9,7 @@ Contents:
 
    overview
    HACKING
+   REVIEWING
 
 ------------
 Field Guides
@@ -32,6 +28,26 @@ where your test contributions should go.
    field_guide/stress
    field_guide/thirdparty
    field_guide/unit_tests
+
+---------------------------
+Tempest Configuration Guide
+---------------------------
+
+.. toctree::
+   :maxdepth: 2
+
+   configuration
+
+---------------------
+Command Documentation
+---------------------
+
+.. toctree::
+   :maxdepth: 1
+
+   account_generator
+   cleanup
+   javelin
 
 ==================
 Indices and tables

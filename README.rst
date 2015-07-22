@@ -18,7 +18,7 @@ Tempest Design Principles that we strive to live by.
   incorrect assessment of their cloud. Explicit is always better.
 - Tempest uses OpenStack public interfaces. Tests in Tempest should
   only touch public interfaces, API calls (native or 3rd party),
-  public CLI or libraries.
+  or libraries.
 - Tempest should not touch private or implementation specific
   interfaces. This means not directly going to the database, not
   directly hitting the hypervisors, not testing extensions not
@@ -54,58 +54,59 @@ and reference data to be used in testing.
 
 .. note::
 
-    If you have a running devstack environment, tempest will be
+    If you have a running devstack environment, Tempest will be
     automatically configured and placed in ``/opt/stack/tempest``. It
     will have a configuration file already set up to work with your
     devstack installation.
 
-Tempest is not tied to any single test runner, but testr is the most commonly
-used tool. After setting up your configuration file, you can execute
-the set of Tempest tests by using ``testr`` ::
+Tempest is not tied to any single test runner, but `testr`_ is the most commonly
+used tool. Also, the nosetests test runner is **not** recommended to run Tempest.
+
+After setting up your configuration file, you can execute the set of Tempest
+tests by using ``testr`` ::
 
     $> testr run --parallel
 
-To run one single test  ::
+.. _testr: http://testrepository.readthedocs.org/en/latest/MANUAL.html
 
-    $> testr run --parallel tempest.api.compute.servers.test_servers_negative.ServersNegativeTestJSON.test_reboot_non_existent_server
+To run one single test serially ::
+
+    $> testr run tempest.api.compute.servers.test_servers_negative.ServersNegativeTestJSON.test_reboot_non_existent_server
 
 Alternatively, you can use the run_tempest.sh script which will create a venv
-and run the tests or use tox to do the same.
+and run the tests or use tox to do the same. Tox also contains several existing
+job configurations. For example::
+
+   $> tox -efull
+
+which will run the same set of tests as the OpenStack gate. (it's exactly how
+the gate invokes Tempest) Or::
+
+  $> tox -esmoke
+
+to run the tests tagged as smoke.
+
 
 Configuration
 -------------
 
-Detailed configuration of tempest is beyond the scope of this
-document. The etc/tempest.conf.sample attempts to be a self
-documenting version of the configuration.
+Detailed configuration of Tempest is beyond the scope of this
+document see :ref:`tempest-configuration` for more details on configuring
+Tempest. The etc/tempest.conf.sample attempts to be a self documenting version
+of the configuration.
 
-The sample config file is auto generated using the script:
-tools/generate_sample.sh
+You can generate a new sample tempest.conf file, run the following
+command from the top level of the Tempest directory:
+
+  tox -egenconfig
 
 The most important pieces that are needed are the user ids, openstack
-endpoints, and basic flavors and images needed to run tests.
-
-Common Issues
--------------
-
-Tempest was originally designed to primarily run against a full OpenStack
-deployment. Due to that focus, some issues may occur when running Tempest
-against devstack.
-
-Running Tempest, especially in parallel, against a devstack instance may
-cause requests to be rate limited, which will cause unexpected failures.
-Given the number of requests Tempest can make against a cluster, rate limiting
-should be disabled for all test accounts.
-
-Additionally, devstack only provides a single image which Nova can use.
-For the moment, the best solution is to provide the same image uuid for
-both image_ref and image_ref_alt. Tempest will skip tests as needed if it
-detects that both images are the same.
+endpoint, and basic flavors and images needed to run tests.
 
 Unit Tests
 ----------
 
-Tempest also has a set of unit tests which test the tempest code itself. These
+Tempest also has a set of unit tests which test the Tempest code itself. These
 tests can be run by specifing the test discovery path::
 
     $> OS_TEST_PATH=./tempest/tests testr run --parallel
@@ -113,20 +114,33 @@ tests can be run by specifing the test discovery path::
 By setting OS_TEST_PATH to ./tempest/tests it specifies that test discover
 should only be run on the unit test directory. The default value of OS_TEST_PATH
 is OS_TEST_PATH=./tempest/test_discover which will only run test discover on the
-tempest suite.
+Tempest suite.
 
 Alternatively, you can use the run_tests.sh script which will create a venv and
-run the unit tests. There are also the py26, py27, or py33 tox jobs which will
-run the unit tests with the corresponding version of python.
+run the unit tests. There are also the py27 and py34 tox jobs which will run
+the unit tests with the corresponding version of python.
 
 Python 2.6
 ----------
 
-Tempest can be run with Python 2.6 however the unit tests and the gate
-currently only run with Python 2.7, so there are no guarantees about the state
-of tempest when running with Python 2.6. Additionally, to enable testr to work
-with tempest using python 2.6 the discover module from the unittest-ext
-project has to be patched to switch the unittest.TestSuite to use
-unittest2.TestSuite instead. See:
+Starting in the kilo release the OpenStack services dropped all support for
+python 2.6. This change has been mirrored in Tempest, starting after the
+tempest-2 tag. This means that proposed changes to Tempest which only fix
+python 2.6 compatibility will be rejected, and moving forward more features not
+present in python 2.6 will be used. If you're running your OpenStack services
+on an earlier release with python 2.6 you can easily run Tempest against it
+from a remote system running python 2.7. (or deploy a cloud guest in your cloud
+that has python 2.7)
 
-https://code.google.com/p/unittest-ext/issues/detail?id=79
+Python 3.4
+----------
+
+Starting during the Liberty release development cycle work began on enabling
+Tempest to run under both Python 2.7 and Python 3.4. Tempest strives to fully
+support running with Python 3.4. A gating unit test job was added to also run
+Tempest's unit tests under Python 3.4. This means that the Tempest code at
+least imports under Python 3.4 and things that have unit test coverage will
+work on Python 3.4. However, because large parts of Tempest are self verifying
+there might be uncaught issues running on Python 3.4. So until there is a gating
+job which does a full Tempest run using Python 3.4 there isn't any guarantee
+that running Tempest under Python 3.4 is bug free.

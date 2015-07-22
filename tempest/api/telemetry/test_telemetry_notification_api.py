@@ -20,28 +20,54 @@ CONF = config.CONF
 
 
 class TelemetryNotificationAPITestJSON(base.BaseTelemetryTest):
-    _interface = 'json'
 
     @classmethod
-    def setUpClass(cls):
+    def skip_checks(cls):
+        super(TelemetryNotificationAPITestJSON, cls).skip_checks()
         if CONF.telemetry.too_slow_to_test:
             raise cls.skipException("Ceilometer feature for fast work mysql "
                                     "is disabled")
-        super(TelemetryNotificationAPITestJSON, cls).setUpClass()
 
-    @test.attr(type="gate")
+    @test.idempotent_id('d7f8c1c8-d470-4731-8604-315d3956caad')
     @testtools.skipIf(not CONF.service_available.nova,
                       "Nova is not available.")
     def test_check_nova_notification(self):
 
-        resp, body = self.create_server()
-        self.assertEqual(resp.status, 202)
+        body = self.create_server()
 
         query = ('resource', 'eq', body['id'])
 
         for metric in self.nova_notifications:
             self.await_samples(metric, query)
 
+    @test.attr(type="smoke")
+    @test.idempotent_id('04b10bfe-a5dc-47af-b22f-0460426bf498')
+    @test.services("image")
+    @testtools.skipIf(not CONF.image_feature_enabled.api_v1,
+                      "Glance api v1 is disabled")
+    def test_check_glance_v1_notifications(self):
+        body = self.create_image(self.image_client)
+        self.image_client.update_image(body['id'], data='data')
 
-class TelemetryNotificationAPITestXML(TelemetryNotificationAPITestJSON):
-    _interface = 'xml'
+        query = 'resource', 'eq', body['id']
+
+        self.image_client.delete_image(body['id'])
+
+        for metric in self.glance_notifications:
+            self.await_samples(metric, query)
+
+    @test.attr(type="smoke")
+    @test.idempotent_id('c240457d-d943-439b-8aea-85e26d64fe8e')
+    @test.services("image")
+    @testtools.skipIf(not CONF.image_feature_enabled.api_v2,
+                      "Glance api v2 is disabled")
+    def test_check_glance_v2_notifications(self):
+        body = self.create_image(self.image_client_v2)
+
+        self.image_client_v2.store_image_file(body['id'], "file")
+        self.image_client_v2.load_image_file(body['id'])
+
+        query = 'resource', 'eq', body['id']
+
+        for metric in self.glance_v2_notifications:
+            self.await_samples(metric, query)

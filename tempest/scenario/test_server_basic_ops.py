@@ -13,9 +13,9 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from tempest.common.utils import data_utils
+from oslo_log import log as logging
+
 from tempest import config
-from tempest.openstack.common import log as logging
 from tempest.scenario import manager
 from tempest.scenario import utils as test_utils
 from tempest import test
@@ -27,7 +27,7 @@ LOG = logging.getLogger(__name__)
 load_tests = test_utils.load_tests_input_scenario_utils
 
 
-class TestServerBasicOps(manager.OfficialClientTest):
+class TestServerBasicOps(manager.ScenarioTest):
 
     """
     This smoke test case follows this basic set of operations:
@@ -36,8 +36,7 @@ class TestServerBasicOps(manager.OfficialClientTest):
      * Create a security group to control network access in instance
      * Add simple permissive rules to the security group
      * Launch an instance
-     * Pause/unpause the instance
-     * Suspend/resume the instance
+     * Perform ssh to instance
      * Terminate the instance
     """
 
@@ -49,7 +48,7 @@ class TestServerBasicOps(manager.OfficialClientTest):
             self.image_ref = CONF.compute.image_ref
         if not hasattr(self, 'flavor_ref'):
             self.flavor_ref = CONF.compute.flavor_ref
-        self.image_utils = test_utils.ImageUtils()
+        self.image_utils = test_utils.ImageUtils(self.manager)
         if not self.image_utils.is_flavor_enough(self.flavor_ref,
                                                  self.image_ref):
             raise self.skipException(
@@ -57,7 +56,7 @@ class TestServerBasicOps(manager.OfficialClientTest):
                     image=self.image_ref, flavor=self.flavor_ref
                 )
             )
-        self.run_ssh = CONF.compute.run_ssh and \
+        self.run_ssh = CONF.validation.run_validation and \
             self.image_utils.is_sshable_image(self.image_ref)
         self.ssh_user = self.image_utils.ssh_user(self.image_ref)
         LOG.debug('Starting test for i:{image}, f:{flavor}. '
@@ -68,56 +67,39 @@ class TestServerBasicOps(manager.OfficialClientTest):
     def add_keypair(self):
         self.keypair = self.create_keypair()
 
-    def create_security_group(self):
-        sg_name = data_utils.rand_name('secgroup-smoke')
-        sg_desc = sg_name + " description"
-        self.secgroup = self.compute_client.security_groups.create(sg_name,
-                                                                   sg_desc)
-        self.assertEqual(self.secgroup.name, sg_name)
-        self.assertEqual(self.secgroup.description, sg_desc)
-        self.set_resource('secgroup', self.secgroup)
-
-        # Add rules to the security group
-        self._create_loginable_secgroup_rule_nova(secgroup_id=self.secgroup.id)
-
     def boot_instance(self):
         # Create server with image and flavor from input scenario
+        security_groups = [{'name': self.security_group['name']}]
         create_kwargs = {
-            'key_name': self.keypair.id
+            'key_name': self.keypair['name'],
+            'security_groups': security_groups
         }
-        instance = self.create_server(image=self.image_ref,
-                                      flavor=self.flavor_ref,
-                                      create_kwargs=create_kwargs)
-        self.set_resource('instance', instance)
-
-    def terminate_instance(self):
-        instance = self.get_resource('instance')
-        instance.delete()
-        self.remove_resource('instance')
+        self.instance = self.create_server(image=self.image_ref,
+                                           flavor=self.flavor_ref,
+                                           create_kwargs=create_kwargs)
 
     def verify_ssh(self):
         if self.run_ssh:
             # Obtain a floating IP
-            floating_ip = self.compute_client.floating_ips.create()
+            floating_ip = self.floating_ips_client.create_floating_ip()
+            self.addCleanup(self.delete_wrapper,
+                            self.floating_ips_client.delete_floating_ip,
+                            floating_ip['id'])
             # Attach a floating IP
-            instance = self.get_resource('instance')
-            instance.add_floating_ip(floating_ip)
+            self.floating_ips_client.associate_floating_ip_to_server(
+                floating_ip['ip'], self.instance['id'])
             # Check ssh
-            try:
-                linux_client = self.get_remote_client(
-                    server_or_ip=floating_ip.ip,
-                    username=self.image_utils.ssh_user(self.image_ref),
-                    private_key=self.keypair.private_key)
-                linux_client.validate_authentication()
-            except Exception:
-                LOG.exception('ssh to server failed')
-                self._log_console_output()
-                raise
+            self.get_remote_client(
+                server_or_ip=floating_ip['ip'],
+                username=self.image_utils.ssh_user(self.image_ref),
+                private_key=self.keypair['private_key'])
 
+    @test.idempotent_id('7fff3fb3-91d8-4fd0-bd7d-0204f1f180ba')
+    @test.attr(type='smoke')
     @test.services('compute', 'network')
     def test_server_basicops(self):
         self.add_keypair()
-        self.create_security_group()
+        self.security_group = self._create_security_group()
         self.boot_instance()
         self.verify_ssh()
-        self.terminate_instance()
+        self.servers_client.delete_server(self.instance['id'])

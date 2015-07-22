@@ -16,16 +16,17 @@
 
 import argparse
 import inspect
-import json
 import sys
-from testtools import testsuite
 try:
     from unittest import loader
 except ImportError:
     # unittest in python 2.6 does not contain loader, so uses unittest2
     from unittest2 import loader
 
-from tempest.openstack.common import log as logging
+from oslo_log import log as logging
+from oslo_serialization import jsonutils as json
+from testtools import testsuite
+
 from tempest.stress import driver
 
 LOG = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ def discover_stress_tests(path="./", filter_attr=None, call_inherited=False):
         except Exception:
             next
         if 'stress' in attrs:
-            if filter_attr is not None and not filter_attr in attrs:
+            if filter_attr is not None and filter_attr not in attrs:
                 continue
             class_setup_per = getattr(test_func, "st_class_setup_per")
 
@@ -101,9 +102,11 @@ def main():
                                       call_inherited=ns.call_inherited)
 
     if ns.serial:
+        # Duration is total time
+        duration = ns.duration / len(tests)
         for test in tests:
             step_result = driver.stress_openstack([test],
-                                                  ns.duration,
+                                                  duration,
                                                   ns.number,
                                                   ns.stop)
             # NOTE(mkoderer): we just save the last result code

@@ -13,32 +13,23 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
-import time
+from oslo_serialization import jsonutils as json
 
-from tempest.api_schema.compute import interfaces as common_schema
-from tempest.api_schema.compute import servers as servers_schema
-from tempest.api_schema.compute.v2 import interfaces as schema
-from tempest.common import rest_client
-from tempest import config
-from tempest import exceptions
-
-CONF = config.CONF
+from tempest.api_schema.response.compute.v2_1 import interfaces as schema
+from tempest.api_schema.response.compute.v2_1 import servers as servers_schema
+from tempest.common import service_client
 
 
-class InterfacesClientJSON(rest_client.RestClient):
+class InterfacesClient(service_client.ServiceClient):
 
-    def __init__(self, auth_provider):
-        super(InterfacesClientJSON, self).__init__(auth_provider)
-        self.service = CONF.compute.catalog_type
-
-    def list_interfaces(self, server):
-        resp, body = self.get('servers/%s/os-interface' % server)
+    def list_interfaces(self, server_id):
+        resp, body = self.get('servers/%s/os-interface' % server_id)
         body = json.loads(body)
         self.validate_response(schema.list_interfaces, resp, body)
-        return resp, body['interfaceAttachments']
+        return service_client.ResponseBodyList(resp,
+                                               body['interfaceAttachments'])
 
-    def create_interface(self, server, port_id=None, network_id=None,
+    def create_interface(self, server_id, port_id=None, network_id=None,
                          fixed_ip=None):
         post_body = dict(interfaceAttachment=dict())
         if port_id:
@@ -49,42 +40,24 @@ class InterfacesClientJSON(rest_client.RestClient):
             fip = dict(ip_address=fixed_ip)
             post_body['interfaceAttachment']['fixed_ips'] = [fip]
         post_body = json.dumps(post_body)
-        resp, body = self.post('servers/%s/os-interface' % server,
+        resp, body = self.post('servers/%s/os-interface' % server_id,
                                body=post_body)
         body = json.loads(body)
-        return resp, body['interfaceAttachment']
+        self.validate_response(schema.get_create_interfaces, resp, body)
+        return service_client.ResponseBody(resp, body['interfaceAttachment'])
 
-    def show_interface(self, server, port_id):
-        resp, body = self.get('servers/%s/os-interface/%s' % (server, port_id))
+    def show_interface(self, server_id, port_id):
+        resp, body = self.get('servers/%s/os-interface/%s' % (server_id,
+                                                              port_id))
         body = json.loads(body)
-        return resp, body['interfaceAttachment']
+        self.validate_response(schema.get_create_interfaces, resp, body)
+        return service_client.ResponseBody(resp, body['interfaceAttachment'])
 
-    def delete_interface(self, server, port_id):
-        resp, body = self.delete('servers/%s/os-interface/%s' % (server,
+    def delete_interface(self, server_id, port_id):
+        resp, body = self.delete('servers/%s/os-interface/%s' % (server_id,
                                                                  port_id))
-        self.validate_response(common_schema.delete_interface, resp, body)
-        return resp, body
-
-    def wait_for_interface_status(self, server, port_id, status):
-        """Waits for a interface to reach a given status."""
-        resp, body = self.show_interface(server, port_id)
-        interface_status = body['port_state']
-        start = int(time.time())
-
-        while(interface_status != status):
-            time.sleep(self.build_interval)
-            resp, body = self.show_interface(server, port_id)
-            interface_status = body['port_state']
-
-            timed_out = int(time.time()) - start >= self.build_timeout
-
-            if interface_status != status and timed_out:
-                message = ('Interface %s failed to reach %s status within '
-                           'the required time (%s s).' %
-                           (port_id, status, self.build_timeout))
-                raise exceptions.TimeoutException(message)
-
-        return resp, body
+        self.validate_response(schema.delete_interface, resp, body)
+        return service_client.ResponseBody(resp, body)
 
     def add_fixed_ip(self, server_id, network_id):
         """Add a fixed IP to input server instance."""
@@ -93,11 +66,11 @@ class InterfacesClientJSON(rest_client.RestClient):
                 'networkId': network_id
             }
         })
-        resp, body = self.post('servers/%s/action' % str(server_id),
+        resp, body = self.post('servers/%s/action' % server_id,
                                post_body)
         self.validate_response(servers_schema.server_actions_common_schema,
                                resp, body)
-        return resp, body
+        return service_client.ResponseBody(resp, body)
 
     def remove_fixed_ip(self, server_id, ip_address):
         """Remove input fixed IP from input server instance."""
@@ -106,8 +79,8 @@ class InterfacesClientJSON(rest_client.RestClient):
                 'address': ip_address
             }
         })
-        resp, body = self.post('servers/%s/action' % str(server_id),
+        resp, body = self.post('servers/%s/action' % server_id,
                                post_body)
         self.validate_response(servers_schema.server_actions_common_schema,
                                resp, body)
-        return resp, body
+        return service_client.ResponseBody(resp, body)

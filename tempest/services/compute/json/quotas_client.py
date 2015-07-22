@@ -13,40 +13,33 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
+from oslo_serialization import jsonutils as json
 
-from tempest.api_schema.compute.v2 import quotas as schema
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.api_schema.response.compute.v2_1 import quotas as schema
+from tempest.common import service_client
 
 
-class QuotasClientJSON(rest_client.RestClient):
+class QuotasClient(service_client.ServiceClient):
 
-    def __init__(self, auth_provider):
-        super(QuotasClientJSON, self).__init__(auth_provider)
-        self.service = CONF.compute.catalog_type
-
-    def get_quota_set(self, tenant_id, user_id=None):
+    def show_quota_set(self, tenant_id, user_id=None):
         """List the quota set for a tenant."""
 
-        url = 'os-quota-sets/%s' % str(tenant_id)
+        url = 'os-quota-sets/%s' % tenant_id
         if user_id:
-            url += '?user_id=%s' % str(user_id)
+            url += '?user_id=%s' % user_id
         resp, body = self.get(url)
         body = json.loads(body)
-        self.validate_response(schema.quota_set, resp, body)
-        return resp, body['quota_set']
+        self.validate_response(schema.get_quota_set, resp, body)
+        return service_client.ResponseBody(resp, body['quota_set'])
 
-    def get_default_quota_set(self, tenant_id):
+    def show_default_quota_set(self, tenant_id):
         """List the default quota set for a tenant."""
 
-        url = 'os-quota-sets/%s/defaults' % str(tenant_id)
+        url = 'os-quota-sets/%s/defaults' % tenant_id
         resp, body = self.get(url)
         body = json.loads(body)
-        self.validate_response(schema.quota_set, resp, body)
-        return resp, body['quota_set']
+        self.validate_response(schema.get_quota_set, resp, body)
+        return service_client.ResponseBody(resp, body['quota_set'])
 
     def update_quota_set(self, tenant_id, user_id=None,
                          force=None, injected_file_content_bytes=None,
@@ -104,17 +97,17 @@ class QuotasClientJSON(rest_client.RestClient):
 
         if user_id:
             resp, body = self.put('os-quota-sets/%s?user_id=%s' %
-                                  (str(tenant_id), str(user_id)), post_body)
+                                  (tenant_id, user_id), post_body)
         else:
-            resp, body = self.put('os-quota-sets/%s' % str(tenant_id),
+            resp, body = self.put('os-quota-sets/%s' % tenant_id,
                                   post_body)
 
         body = json.loads(body)
-        self.validate_response(schema.quota_set_update, resp, body)
-        return resp, body['quota_set']
+        self.validate_response(schema.update_quota_set, resp, body)
+        return service_client.ResponseBody(resp, body['quota_set'])
 
     def delete_quota_set(self, tenant_id):
         """Delete the tenant's quota set."""
-        resp, body = self.delete('os-quota-sets/%s' % str(tenant_id))
+        resp, body = self.delete('os-quota-sets/%s' % tenant_id)
         self.validate_response(schema.delete_quota, resp, body)
-        return resp, body
+        return service_client.ResponseBody(resp, body)

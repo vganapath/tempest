@@ -13,34 +13,22 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
+from oslo_serialization import jsonutils as json
 
-from tempest.api_schema.compute.v2 import extensions as schema
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.api_schema.response.compute.v2_1 import extensions as schema
+from tempest.common import service_client
 
 
-class ExtensionsClientJSON(rest_client.RestClient):
-
-    def __init__(self, auth_provider):
-        super(ExtensionsClientJSON, self).__init__(auth_provider)
-        self.service = CONF.compute.catalog_type
+class ExtensionsClient(service_client.ServiceClient):
 
     def list_extensions(self):
         url = 'extensions'
         resp, body = self.get(url)
         body = json.loads(body)
         self.validate_response(schema.list_extensions, resp, body)
-        return resp, body['extensions']
+        return service_client.ResponseBodyList(resp, body['extensions'])
 
-    def is_enabled(self, extension):
-        _, extensions = self.list_extensions()
-        exts = extensions['extensions']
-        return any([e for e in exts if e['name'] == extension])
-
-    def get_extension(self, extension_alias):
+    def show_extension(self, extension_alias):
         resp, body = self.get('extensions/%s' % extension_alias)
         body = json.loads(body)
-        return resp, body['extension']
+        return service_client.ResponseBody(resp, body['extension'])

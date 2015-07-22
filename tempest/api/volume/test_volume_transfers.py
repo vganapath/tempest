@@ -16,30 +16,19 @@
 from testtools import matchers
 
 from tempest.api.volume import base
-from tempest import clients
 from tempest import config
 from tempest import test
 
 CONF = config.CONF
 
 
-class VolumesTransfersTest(base.BaseVolumeV1Test):
-    _interface = "json"
+class VolumesV2TransfersTest(base.BaseVolumeTest):
+
+    credentials = ['primary', 'alt', 'admin']
 
     @classmethod
-    def setUpClass(cls):
-        super(VolumesTransfersTest, cls).setUpClass()
-
-        # Add another tenant to test volume-transfer
-        if CONF.compute.allow_tenant_isolation:
-            cls.os_alt = clients.Manager(cls.isolated_creds.get_alt_creds(),
-                                         interface=cls._interface)
-            # Add admin tenant to cleanup resources
-            cls.os_adm = clients.Manager(cls.isolated_creds.get_admin_creds(),
-                                         interface=cls._interface)
-        else:
-            cls.os_alt = clients.AltManager()
-            cls.os_adm = clients.ComputeAdminManager(interface=cls._interface)
+    def setup_clients(cls):
+        super(VolumesV2TransfersTest, cls).setup_clients()
 
         cls.client = cls.volumes_client
         cls.alt_client = cls.os_alt.volumes_client
@@ -48,56 +37,50 @@ class VolumesTransfersTest(base.BaseVolumeV1Test):
 
     def _delete_volume(self, volume_id):
         # Delete the specified volume using admin creds
-        resp, _ = self.adm_client.delete_volume(volume_id)
-        self.assertEqual(202, resp.status)
+        self.adm_client.delete_volume(volume_id)
         self.adm_client.wait_for_resource_deletion(volume_id)
 
-    @test.attr(type='gate')
+    @test.idempotent_id('4d75b645-a478-48b1-97c8-503f64242f1a')
     def test_create_get_list_accept_volume_transfer(self):
         # Create a volume first
         volume = self.create_volume()
         self.addCleanup(self._delete_volume, volume['id'])
 
         # Create a volume transfer
-        resp, transfer = self.client.create_volume_transfer(volume['id'])
-        self.assertEqual(202, resp.status)
+        transfer = self.client.create_volume_transfer(volume['id'])
         transfer_id = transfer['id']
         auth_key = transfer['auth_key']
         self.client.wait_for_volume_status(volume['id'],
                                            'awaiting-transfer')
 
         # Get a volume transfer
-        resp, body = self.client.get_volume_transfer(transfer_id)
-        self.assertEqual(200, resp.status)
+        body = self.client.show_volume_transfer(transfer_id)
         self.assertEqual(volume['id'], body['volume_id'])
 
         # List volume transfers, the result should be greater than
         # or equal to 1
-        resp, body = self.client.list_volume_transfers()
-        self.assertEqual(200, resp.status)
+        body = self.client.list_volume_transfers()
         self.assertThat(len(body), matchers.GreaterThan(0))
 
         # Accept a volume transfer by alt_tenant
-        resp, body = self.alt_client.accept_volume_transfer(transfer_id,
-                                                            auth_key)
-        self.assertEqual(202, resp.status)
+        body = self.alt_client.accept_volume_transfer(transfer_id,
+                                                      auth_key)
         self.alt_client.wait_for_volume_status(volume['id'], 'available')
 
+    @test.idempotent_id('ab526943-b725-4c07-b875-8e8ef87a2c30')
     def test_create_list_delete_volume_transfer(self):
         # Create a volume first
         volume = self.create_volume()
         self.addCleanup(self._delete_volume, volume['id'])
 
         # Create a volume transfer
-        resp, body = self.client.create_volume_transfer(volume['id'])
-        self.assertEqual(202, resp.status)
+        body = self.client.create_volume_transfer(volume['id'])
         transfer_id = body['id']
         self.client.wait_for_volume_status(volume['id'],
                                            'awaiting-transfer')
 
         # List all volume transfers (looking for the one we created)
-        resp, body = self.client.list_volume_transfers()
-        self.assertEqual(200, resp.status)
+        body = self.client.list_volume_transfers()
         for transfer in body:
             if volume['id'] == transfer['volume_id']:
                 break
@@ -105,10 +88,9 @@ class VolumesTransfersTest(base.BaseVolumeV1Test):
             self.fail('Transfer not found for volume %s' % volume['id'])
 
         # Delete a volume transfer
-        resp, body = self.client.delete_volume_transfer(transfer_id)
-        self.assertEqual(202, resp.status)
+        self.client.delete_volume_transfer(transfer_id)
         self.client.wait_for_volume_status(volume['id'], 'available')
 
 
-class VolumesTransfersTestXML(VolumesTransfersTest):
-    _interface = "xml"
+class VolumesV1TransfersTest(VolumesV2TransfersTest):
+    _api_version = 1

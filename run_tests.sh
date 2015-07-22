@@ -19,7 +19,7 @@ function usage {
 
 testrargs=""
 just_pep8=0
-venv=.venv
+venv=${VENV:-.venv}
 with_venv=tools/with_venv.sh
 serial=0
 always_venv=0
@@ -103,8 +103,6 @@ function run_pep8 {
       echo "Running flake8 without virtual env may miss OpenStack HACKING detection" >&2
   fi
   ${wrapper} flake8
-  export MODULEPATH=tempest.common.generate_sample_tempest
-  ${wrapper} tools/config/check_uptodate.sh
 }
 
 if [ $never_venv -eq 0 ]

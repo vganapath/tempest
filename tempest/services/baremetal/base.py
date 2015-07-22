@@ -11,15 +11,12 @@
 #    under the License.
 
 import functools
-import json
-import urllib
 
+from oslo_serialization import jsonutils as json
 import six
+from six.moves.urllib import parse as urllib
 
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.common import service_client
 
 
 def handle_errors(f):
@@ -42,26 +39,23 @@ def handle_errors(f):
     return wrapper
 
 
-class BaremetalClient(rest_client.RestClient):
+class BaremetalClient(service_client.ServiceClient):
     """
     Base Tempest REST client for Ironic API.
 
     """
 
-    def __init__(self, auth_provider):
-        super(BaremetalClient, self).__init__(auth_provider)
-        self.service = CONF.baremetal.catalog_type
-        self.uri_prefix = ''
+    uri_prefix = ''
 
-    def serialize(self, object_type, object_dict):
+    def serialize(self, object_dict):
         """Serialize an Ironic object."""
 
-        raise NotImplementedError
+        return json.dumps(object_dict)
 
     def deserialize(self, object_str):
         """Deserialize an Ironic object."""
 
-        raise NotImplementedError
+        return json.loads(object_str)
 
     def _get_uri(self, resource_name, uuid=None, permanent=False):
         """
@@ -95,9 +89,13 @@ class BaremetalClient(rest_client.RestClient):
                     for ch in get_change(value, path + '%s/' % name):
                         yield ch
                 else:
-                    yield {'path': path + name,
-                           'value': value,
-                           'op': 'replace'}
+                    if value is None:
+                        yield {'path': path + name,
+                               'op': 'remove'}
+                    else:
+                        yield {'path': path + name,
+                               'value': value,
+                               'op': 'replace'}
 
         patch = [ch for ch in get_change(kw)
                  if ch['path'].lstrip('/') in allowed_attributes]
@@ -119,10 +117,11 @@ class BaremetalClient(rest_client.RestClient):
             uri += "?%s" % urllib.urlencode(kwargs)
 
         resp, body = self.get(uri)
+        self.expected_success(200, resp['status'])
 
         return resp, self.deserialize(body)
 
-    def _show_request(self, resource, uuid, permanent=False):
+    def _show_request(self, resource, uuid, permanent=False, **kwargs):
         """
         Gets a specific object of the specified type.
 
@@ -130,12 +129,16 @@ class BaremetalClient(rest_client.RestClient):
         :return: Serialized object as a dictionary.
 
         """
-        uri = self._get_uri(resource, uuid=uuid, permanent=permanent)
+        if 'uri' in kwargs:
+            uri = kwargs['uri']
+        else:
+            uri = self._get_uri(resource, uuid=uuid, permanent=permanent)
         resp, body = self.get(uri)
+        self.expected_success(200, resp['status'])
 
         return resp, self.deserialize(body)
 
-    def _create_request(self, resource, object_type, object_dict):
+    def _create_request(self, resource, object_dict):
         """
         Create an object of the specified type.
 
@@ -146,10 +149,11 @@ class BaremetalClient(rest_client.RestClient):
                  object.
 
         """
-        body = self.serialize(object_type, object_dict)
+        body = self.serialize(object_dict)
         uri = self._get_uri(resource)
 
         resp, body = self.post(uri, body=body)
+        self.expected_success(201, resp['status'])
 
         return resp, self.deserialize(body)
 
@@ -165,6 +169,7 @@ class BaremetalClient(rest_client.RestClient):
         uri = self._get_uri(resource, uuid)
 
         resp, body = self.delete(uri)
+        self.expected_success(204, resp['status'])
         return resp, body
 
     def _patch_request(self, resource, uuid, patch_object):
@@ -181,6 +186,7 @@ class BaremetalClient(rest_client.RestClient):
         patch_body = json.dumps(patch_object)
 
         resp, body = self.patch(uri, body=patch_body)
+        self.expected_success(200, resp['status'])
         return resp, self.deserialize(body)
 
     @handle_errors
@@ -199,3 +205,15 @@ class BaremetalClient(rest_client.RestClient):
 
         """
         return self._list_request(version, permanent=True)
+
+    def _put_request(self, resource, put_object):
+        """
+        Update specified object with JSON-patch.
+
+        """
+        uri = self._get_uri(resource)
+        put_body = json.dumps(put_object)
+
+        resp, body = self.put(uri, body=put_body)
+        self.expected_success(202, resp['status'])
+        return resp, body

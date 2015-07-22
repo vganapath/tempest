@@ -14,23 +14,16 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
-import urllib
+from oslo_serialization import jsonutils as json
+from six.moves.urllib import parse as urllib
 
-from tempest.api_schema.compute import services as schema
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.api_schema.response.compute.v2_1 import services as schema
+from tempest.common import service_client
 
 
-class ServicesClientJSON(rest_client.RestClient):
+class ServicesClient(service_client.ServiceClient):
 
-    def __init__(self, auth_provider):
-        super(ServicesClientJSON, self).__init__(auth_provider)
-        self.service = CONF.compute.catalog_type
-
-    def list_services(self, params=None):
+    def list_services(self, **params):
         url = 'os-services'
         if params:
             url += '?%s' % urllib.urlencode(params)
@@ -38,7 +31,7 @@ class ServicesClientJSON(rest_client.RestClient):
         resp, body = self.get(url)
         body = json.loads(body)
         self.validate_response(schema.list_services, resp, body)
-        return resp, body['services']
+        return service_client.ResponseBodyList(resp, body['services'])
 
     def enable_service(self, host_name, binary):
         """
@@ -50,7 +43,7 @@ class ServicesClientJSON(rest_client.RestClient):
         resp, body = self.put('os-services/enable', post_body)
         body = json.loads(body)
         self.validate_response(schema.enable_service, resp, body)
-        return resp, body['service']
+        return service_client.ResponseBody(resp, body['service'])
 
     def disable_service(self, host_name, binary):
         """
@@ -61,4 +54,4 @@ class ServicesClientJSON(rest_client.RestClient):
         post_body = json.dumps({'binary': binary, 'host': host_name})
         resp, body = self.put('os-services/disable', post_body)
         body = json.loads(body)
-        return resp, body['service']
+        return service_client.ResponseBody(resp, body['service'])

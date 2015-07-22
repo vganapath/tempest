@@ -15,17 +15,10 @@
 
 import urllib
 
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.common import service_client
 
 
-class DatabaseFlavorsClientJSON(rest_client.RestClient):
-
-    def __init__(self, auth_provider):
-        super(DatabaseFlavorsClientJSON, self).__init__(auth_provider)
-        self.service = CONF.database.catalog_type
+class DatabaseFlavorsClient(service_client.ServiceClient):
 
     def list_db_flavors(self, params=None):
         url = 'flavors'
@@ -33,8 +26,10 @@ class DatabaseFlavorsClientJSON(rest_client.RestClient):
             url += '?%s' % urllib.urlencode(params)
 
         resp, body = self.get(url)
-        return resp, self._parse_resp(body)
+        self.expected_success(200, resp.status)
+        return service_client.ResponseBodyList(resp, self._parse_resp(body))
 
     def get_db_flavor_details(self, db_flavor_id):
         resp, body = self.get("flavors/%s" % str(db_flavor_id))
-        return resp, self._parse_resp(body)
+        self.expected_success(200, resp.status)
+        return service_client.ResponseBody(resp, self._parse_resp(body))

@@ -1,4 +1,4 @@
-# Copyright 2014 OpenStack Foundation
+# Copyright 2014 Hewlett-Packard Development Company, L.P
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -13,22 +13,14 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
-import urllib
+from oslo_serialization import jsonutils as json
+from six.moves.urllib import parse as urllib
 
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.common import service_client
 
 
-class RegionClientJSON(rest_client.RestClient):
-
-    def __init__(self, auth_provider):
-        super(RegionClientJSON, self).__init__(auth_provider)
-        self.service = CONF.identity.catalog_type
-        self.endpoint_url = 'adminURL'
-        self.api_version = "v3"
+class RegionClient(service_client.ServiceClient):
+    api_version = "v3"
 
     def create_region(self, description, **kwargs):
         """Create region."""
@@ -43,8 +35,9 @@ class RegionClientJSON(rest_client.RestClient):
                 'regions/%s' % kwargs.get('unique_region_id'), req_body)
         else:
             resp, body = self.post('regions', req_body)
+        self.expected_success(201, resp.status)
         body = json.loads(body)
-        return resp, body['region']
+        return service_client.ResponseBody(resp, body['region'])
 
     def update_region(self, region_id, **kwargs):
         """Updates a region."""
@@ -55,15 +48,17 @@ class RegionClientJSON(rest_client.RestClient):
             post_body['parent_region_id'] = kwargs.get('parent_region_id')
         post_body = json.dumps({'region': post_body})
         resp, body = self.patch('regions/%s' % region_id, post_body)
+        self.expected_success(200, resp.status)
         body = json.loads(body)
-        return resp, body['region']
+        return service_client.ResponseBody(resp, body['region'])
 
     def get_region(self, region_id):
         """Get region."""
         url = 'regions/%s' % region_id
         resp, body = self.get(url)
+        self.expected_success(200, resp.status)
         body = json.loads(body)
-        return resp, body['region']
+        return service_client.ResponseBody(resp, body['region'])
 
     def list_regions(self, params=None):
         """List regions."""
@@ -71,10 +66,12 @@ class RegionClientJSON(rest_client.RestClient):
         if params:
             url += '?%s' % urllib.urlencode(params)
         resp, body = self.get(url)
+        self.expected_success(200, resp.status)
         body = json.loads(body)
-        return resp, body['regions']
+        return service_client.ResponseBodyList(resp, body['regions'])
 
     def delete_region(self, region_id):
         """Delete region."""
         resp, body = self.delete('regions/%s' % region_id)
-        return resp, body
+        self.expected_success(204, resp.status)
+        return service_client.ResponseBody(resp, body)

@@ -10,13 +10,15 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+import re
+
 from tempest.common.utils import data_utils
 from tempest.common.utils.linux import remote_client
+from tempest.common import waiters
 from tempest import config
 import tempest.stress.stressaction as stressaction
 import tempest.test
 
-import re
 CONF = config.CONF
 
 
@@ -24,12 +26,10 @@ class VolumeVerifyStress(stressaction.StressAction):
 
     def _create_keypair(self):
         keyname = data_utils.rand_name("key")
-        resp, self.key = self.manager.keypairs_client.create_keypair(keyname)
-        assert(resp.status == 200)
+        self.key = self.manager.keypairs_client.create_keypair(keyname)
 
     def _delete_keypair(self):
-        resp, _ = self.manager.keypairs_client.delete_keypair(self.key['name'])
-        assert(resp.status == 202)
+        self.manager.keypairs_client.delete_keypair(self.key['name'])
 
     def _create_vm(self):
         self.name = name = data_utils.rand_name("instance")
@@ -38,27 +38,25 @@ class VolumeVerifyStress(stressaction.StressAction):
         vm_args = self.vm_extra_args.copy()
         vm_args['security_groups'] = [self.sec_grp]
         vm_args['key_name'] = self.key['name']
-        resp, server = servers_client.create_server(name, self.image,
-                                                    self.flavor,
-                                                    **vm_args)
+        server = servers_client.create_server(name, self.image,
+                                              self.flavor,
+                                              **vm_args)
         self.server_id = server['id']
-        assert(resp.status == 202)
-        self.manager.servers_client.wait_for_server_status(self.server_id,
-                                                           'ACTIVE')
+        waiters.wait_for_server_status(self.manager.servers_client,
+                                       self.server_id, 'ACTIVE')
 
     def _destroy_vm(self):
         self.logger.info("deleting server: %s" % self.server_id)
-        resp, _ = self.manager.servers_client.delete_server(self.server_id)
-        assert(resp.status == 204)  # It cannot be 204 if I had to wait..
+        self.manager.servers_client.delete_server(self.server_id)
         self.manager.servers_client.wait_for_server_termination(self.server_id)
         self.logger.info("deleted server: %s" % self.server_id)
 
     def _create_sec_group(self):
         sec_grp_cli = self.manager.security_groups_client
-        s_name = data_utils.rand_name('sec_grp-')
-        s_description = data_utils.rand_name('desc-')
-        _, self.sec_grp = sec_grp_cli.create_security_group(s_name,
-                                                            s_description)
+        s_name = data_utils.rand_name('sec_grp')
+        s_description = data_utils.rand_name('desc')
+        self.sec_grp = sec_grp_cli.create_security_group(s_name,
+                                                         s_description)
         create_rule = sec_grp_cli.create_security_group_rule
         create_rule(self.sec_grp['id'], 'tcp', 22, 22)
         create_rule(self.sec_grp['id'], 'icmp', -1, -1)
@@ -69,7 +67,7 @@ class VolumeVerifyStress(stressaction.StressAction):
 
     def _create_floating_ip(self):
         floating_cli = self.manager.floating_ips_client
-        _, self.floating = floating_cli.create_floating_ip(self.floating_pool)
+        self.floating = floating_cli.create_floating_ip(self.floating_pool)
 
     def _destroy_floating_ip(self):
         cli = self.manager.floating_ips_client
@@ -81,10 +79,8 @@ class VolumeVerifyStress(stressaction.StressAction):
         name = data_utils.rand_name("volume")
         self.logger.info("creating volume: %s" % name)
         volumes_client = self.manager.volumes_client
-        resp, self.volume = volumes_client.create_volume(size=1,
-                                                         display_name=
-                                                         name)
-        assert(resp.status == 200)
+        self.volume = volumes_client.create_volume(
+            display_name=name)
         volumes_client.wait_for_volume_status(self.volume['id'],
                                               'available')
         self.logger.info("created volume: %s" % self.volume['id'])
@@ -92,8 +88,7 @@ class VolumeVerifyStress(stressaction.StressAction):
     def _delete_volume(self):
         self.logger.info("deleting volume: %s" % self.volume['id'])
         volumes_client = self.manager.volumes_client
-        resp, _ = volumes_client.delete_volume(self.volume['id'])
-        assert(resp.status == 202)
+        volumes_client.delete_volume(self.volume['id'])
         volumes_client.wait_for_resource_deletion(self.volume['id'])
         self.logger.info("deleted volume: %s" % self.volume['id'])
 
@@ -101,7 +96,7 @@ class VolumeVerifyStress(stressaction.StressAction):
         cli = self.manager.floating_ips_client
 
         def func():
-            _, floating = cli.get_floating_ip_details(self.floating['id'])
+            floating = cli.show_floating_ip(self.floating['id'])
             return floating['instance_id'] is None
 
         if not tempest.test.call_until_true(func, CONF.compute.build_timeout,
@@ -192,11 +187,10 @@ class VolumeVerifyStress(stressaction.StressAction):
             self._create_volume()
         servers_client = self.manager.servers_client
         self.logger.info("attach volume (%s) to vm %s" %
-                        (self.volume['id'], self.server_id))
-        resp, body = servers_client.attach_volume(self.server_id,
-                                                  self.volume['id'],
-                                                  self.part_name)
-        assert(resp.status == 200)
+                         (self.volume['id'], self.server_id))
+        servers_client.attach_volume(self.server_id,
+                                     self.volume['id'],
+                                     self.part_name)
         self.manager.volumes_client.wait_for_volume_status(self.volume['id'],
                                                            'in-use')
         if self.enable_ssh_verify:
@@ -204,9 +198,8 @@ class VolumeVerifyStress(stressaction.StressAction):
                              % self.server_id)
             self.part_wait(self.attach_match_count)
 
-        resp, body = servers_client.detach_volume(self.server_id,
-                                                  self.volume['id'])
-        assert(resp.status == 202)
+        servers_client.detach_volume(self.server_id,
+                                     self.volume['id'])
         self.manager.volumes_client.wait_for_volume_status(self.volume['id'],
                                                            'available')
         if self.enable_ssh_verify:

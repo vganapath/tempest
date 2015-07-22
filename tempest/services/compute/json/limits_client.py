@@ -13,32 +13,16 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
+from oslo_serialization import jsonutils as json
 
-from tempest.api_schema.compute.v2 import limits as schema
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.api_schema.response.compute.v2_1 import limits as schema
+from tempest.common import service_client
 
 
-class LimitsClientJSON(rest_client.RestClient):
+class LimitsClient(service_client.ServiceClient):
 
-    def __init__(self, auth_provider):
-        super(LimitsClientJSON, self).__init__(auth_provider)
-        self.service = CONF.compute.catalog_type
-
-    def get_absolute_limits(self):
+    def show_limits(self):
         resp, body = self.get("limits")
         body = json.loads(body)
         self.validate_response(schema.get_limit, resp, body)
-        return resp, body['limits']['absolute']
-
-    def get_specific_absolute_limit(self, absolute_limit):
-        resp, body = self.get("limits")
-        body = json.loads(body)
-        self.validate_response(schema.get_limit, resp, body)
-        if absolute_limit not in body['limits']['absolute']:
-            return None
-        else:
-            return body['limits']['absolute'][absolute_limit]
+        return service_client.ResponseBody(resp, body['limits'])

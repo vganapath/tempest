@@ -21,14 +21,14 @@ from tempest.thirdparty.boto import test as boto_test
 class EC2SecurityGroupTest(boto_test.BotoTestCase):
 
     @classmethod
-    def setUpClass(cls):
-        super(EC2SecurityGroupTest, cls).setUpClass()
+    def setup_clients(cls):
+        super(EC2SecurityGroupTest, cls).setup_clients()
         cls.client = cls.os.ec2api_client
 
-    @test.attr(type='smoke')
+    @test.idempotent_id('519b566e-0c38-4629-905e-7d6b6355f524')
     def test_create_authorize_security_group(self):
         # EC2 Create, authorize/revoke security group
-        group_name = data_utils.rand_name("securty_group-")
+        group_name = data_utils.rand_name("securty_group")
         group_description = group_name + " security group description "
         group = self.client.create_security_group(group_name,
                                                   group_description)

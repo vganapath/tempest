@@ -13,10 +13,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-
 import httplib2
-import json
+from oslo_serialization import jsonutils as json
 
+FAKE_AUTH_URL = 'http://fake_uri.com/auth'
 
 TOKEN = "fake_token"
 ALT_TOKEN = "alt_fake_token"

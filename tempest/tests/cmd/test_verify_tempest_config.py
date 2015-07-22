@@ -12,13 +12,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
 
 import mock
+from oslo_serialization import jsonutils as json
+from oslotest import mockpatch
 
 from tempest.cmd import verify_tempest_config
 from tempest import config
-from tempest.openstack.common.fixture import mockpatch
 from tempest.tests import base
 from tempest.tests import fake_config
 
@@ -49,9 +49,8 @@ class TestDiscovery(base.TestCase):
             return_value='http://fake_endpoint:5000'))
         fake_resp = {'versions': {'values': [{'id': 'v2.0'}, {'id': 'v3.0'}]}}
         fake_resp = json.dumps(fake_resp)
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config.RAW_HTTP, 'request',
-            return_value=(None, fake_resp)))
+        self.useFixture(mockpatch.Patch('httplib2.Http.request',
+                                        return_value=(None, fake_resp)))
         fake_os = mock.MagicMock()
         versions = verify_tempest_config._get_api_versions(fake_os, 'keystone')
         self.assertIn('v2.0', versions)
@@ -63,9 +62,8 @@ class TestDiscovery(base.TestCase):
             return_value='http://fake_endpoint:5000'))
         fake_resp = {'versions': [{'id': 'v1.0'}, {'id': 'v2.0'}]}
         fake_resp = json.dumps(fake_resp)
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config.RAW_HTTP, 'request',
-            return_value=(None, fake_resp)))
+        self.useFixture(mockpatch.Patch('httplib2.Http.request',
+                                        return_value=(None, fake_resp)))
         fake_os = mock.MagicMock()
         versions = verify_tempest_config._get_api_versions(fake_os, 'cinder')
         self.assertIn('v1.0', versions)
@@ -77,13 +75,30 @@ class TestDiscovery(base.TestCase):
             return_value='http://fake_endpoint:5000'))
         fake_resp = {'versions': [{'id': 'v2.0'}, {'id': 'v3.0'}]}
         fake_resp = json.dumps(fake_resp)
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config.RAW_HTTP, 'request',
-            return_value=(None, fake_resp)))
+        self.useFixture(mockpatch.Patch('httplib2.Http.request',
+                                        return_value=(None, fake_resp)))
         fake_os = mock.MagicMock()
         versions = verify_tempest_config._get_api_versions(fake_os, 'nova')
         self.assertIn('v2.0', versions)
         self.assertIn('v3.0', versions)
+
+    def test_verify_api_versions(self):
+        api_services = ['cinder', 'glance', 'keystone']
+        fake_os = mock.MagicMock()
+        for svc in api_services:
+            m = 'verify_%s_api_versions' % svc
+            with mock.patch.object(verify_tempest_config, m) as verify_mock:
+                verify_tempest_config.verify_api_versions(fake_os, svc, True)
+                verify_mock.assert_called_once_with(fake_os, True)
+
+    def test_verify_api_versions_not_implemented(self):
+        api_services = ['cinder', 'glance', 'keystone']
+        fake_os = mock.MagicMock()
+        for svc in api_services:
+            m = 'verify_%s_api_versions' % svc
+            with mock.patch.object(verify_tempest_config, m) as verify_mock:
+                verify_tempest_config.verify_api_versions(fake_os, 'foo', True)
+                self.assertFalse(verify_mock.called)
 
     def test_verify_keystone_api_versions_no_v3(self):
         self.useFixture(mockpatch.PatchObject(
@@ -91,9 +106,8 @@ class TestDiscovery(base.TestCase):
             return_value='http://fake_endpoint:5000'))
         fake_resp = {'versions': {'values': [{'id': 'v2.0'}]}}
         fake_resp = json.dumps(fake_resp)
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config.RAW_HTTP, 'request',
-            return_value=(None, fake_resp)))
+        self.useFixture(mockpatch.Patch('httplib2.Http.request',
+                                        return_value=(None, fake_resp)))
         fake_os = mock.MagicMock()
         with mock.patch.object(verify_tempest_config,
                                'print_and_or_update') as print_mock:
@@ -108,9 +122,8 @@ class TestDiscovery(base.TestCase):
             return_value='http://fake_endpoint:5000'))
         fake_resp = {'versions': {'values': [{'id': 'v3.0'}]}}
         fake_resp = json.dumps(fake_resp)
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config.RAW_HTTP, 'request',
-            return_value=(None, fake_resp)))
+        self.useFixture(mockpatch.Patch('httplib2.Http.request',
+                                        return_value=(None, fake_resp)))
         fake_os = mock.MagicMock()
         with mock.patch.object(verify_tempest_config,
                                'print_and_or_update') as print_mock:
@@ -125,9 +138,8 @@ class TestDiscovery(base.TestCase):
             return_value='http://fake_endpoint:5000'))
         fake_resp = {'versions': [{'id': 'v1.0'}]}
         fake_resp = json.dumps(fake_resp)
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config.RAW_HTTP, 'request',
-            return_value=(None, fake_resp)))
+        self.useFixture(mockpatch.Patch('httplib2.Http.request',
+                                        return_value=(None, fake_resp)))
         fake_os = mock.MagicMock()
         with mock.patch.object(verify_tempest_config,
                                'print_and_or_update') as print_mock:
@@ -141,30 +153,13 @@ class TestDiscovery(base.TestCase):
             return_value='http://fake_endpoint:5000'))
         fake_resp = {'versions': [{'id': 'v2.0'}]}
         fake_resp = json.dumps(fake_resp)
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config.RAW_HTTP, 'request',
-            return_value=(None, fake_resp)))
+        self.useFixture(mockpatch.Patch('httplib2.Http.request',
+                                        return_value=(None, fake_resp)))
         fake_os = mock.MagicMock()
         with mock.patch.object(verify_tempest_config,
                                'print_and_or_update') as print_mock:
             verify_tempest_config.verify_cinder_api_versions(fake_os, True)
         print_mock.assert_called_once_with('api_v1', 'volume_feature_enabled',
-                                           False, True)
-
-    def test_verify_nova_versions(self):
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config, '_get_unversioned_endpoint',
-            return_value='http://fake_endpoint:5000'))
-        fake_resp = {'versions': [{'id': 'v2.0'}]}
-        fake_resp = json.dumps(fake_resp)
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config.RAW_HTTP, 'request',
-            return_value=(None, fake_resp)))
-        fake_os = mock.MagicMock()
-        with mock.patch.object(verify_tempest_config,
-                               'print_and_or_update') as print_mock:
-            verify_tempest_config.verify_nova_api_versions(fake_os, True)
-        print_mock.assert_called_once_with('api_v3', 'compute_feature_enabled',
                                            False, True)
 
     def test_verify_glance_version_no_v2_with_v1_1(self):
@@ -202,9 +197,9 @@ class TestDiscovery(base.TestCase):
 
     def test_verify_extensions_neutron(self):
         def fake_list_extensions():
-            return (None, {'extensions': [{'alias': 'fake1'},
-                                          {'alias': 'fake2'},
-                                          {'alias': 'not_fake'}]})
+            return {'extensions': [{'alias': 'fake1'},
+                                   {'alias': 'fake2'},
+                                   {'alias': 'not_fake'}]}
         fake_os = mock.MagicMock()
         fake_os.network_client.list_extensions = fake_list_extensions
         self.useFixture(mockpatch.PatchObject(
@@ -224,9 +219,9 @@ class TestDiscovery(base.TestCase):
 
     def test_verify_extensions_neutron_all(self):
         def fake_list_extensions():
-            return (None, {'extensions': [{'alias': 'fake1'},
-                                          {'alias': 'fake2'},
-                                          {'alias': 'not_fake'}]})
+            return {'extensions': [{'alias': 'fake1'},
+                                   {'alias': 'fake2'},
+                                   {'alias': 'not_fake'}]}
         fake_os = mock.MagicMock()
         fake_os.network_client.list_extensions = fake_list_extensions
         self.useFixture(mockpatch.PatchObject(
@@ -236,14 +231,14 @@ class TestDiscovery(base.TestCase):
                                                           'neutron', {})
         self.assertIn('neutron', results)
         self.assertIn('extensions', results['neutron'])
-        self.assertEqual(['fake1', 'fake2', 'not_fake'],
-                         results['neutron']['extensions'])
+        self.assertEqual(sorted(['fake1', 'fake2', 'not_fake']),
+                         sorted(results['neutron']['extensions']))
 
     def test_verify_extensions_cinder(self):
         def fake_list_extensions():
-            return (None, {'extensions': [{'name': 'fake1'},
-                                          {'name': 'fake2'},
-                                          {'name': 'not_fake'}]})
+            return {'extensions': [{'alias': 'fake1'},
+                                   {'alias': 'fake2'},
+                                   {'alias': 'not_fake'}]}
         fake_os = mock.MagicMock()
         fake_os.volumes_extension_client.list_extensions = fake_list_extensions
         self.useFixture(mockpatch.PatchObject(
@@ -263,9 +258,9 @@ class TestDiscovery(base.TestCase):
 
     def test_verify_extensions_cinder_all(self):
         def fake_list_extensions():
-            return (None, {'extensions': [{'name': 'fake1'},
-                                          {'name': 'fake2'},
-                                          {'name': 'not_fake'}]})
+            return {'extensions': [{'alias': 'fake1'},
+                                   {'alias': 'fake2'},
+                                   {'alias': 'not_fake'}]}
         fake_os = mock.MagicMock()
         fake_os.volumes_extension_client.list_extensions = fake_list_extensions
         self.useFixture(mockpatch.PatchObject(
@@ -275,14 +270,13 @@ class TestDiscovery(base.TestCase):
                                                           'cinder', {})
         self.assertIn('cinder', results)
         self.assertIn('extensions', results['cinder'])
-        self.assertEqual(['fake1', 'fake2', 'not_fake'],
-                         results['cinder']['extensions'])
+        self.assertEqual(sorted(['fake1', 'fake2', 'not_fake']),
+                         sorted(results['cinder']['extensions']))
 
     def test_verify_extensions_nova(self):
         def fake_list_extensions():
-            return (None, {'extensions': [{'alias': 'fake1'},
-                                          {'alias': 'fake2'},
-                                          {'alias': 'not_fake'}]})
+            return ([{'alias': 'fake1'}, {'alias': 'fake2'},
+                     {'alias': 'not_fake'}])
         fake_os = mock.MagicMock()
         fake_os.extensions_client.list_extensions = fake_list_extensions
         self.useFixture(mockpatch.PatchObject(
@@ -302,9 +296,9 @@ class TestDiscovery(base.TestCase):
 
     def test_verify_extensions_nova_all(self):
         def fake_list_extensions():
-            return (None, {'extensions': [{'alias': 'fake1'},
-                                          {'alias': 'fake2'},
-                                          {'alias': 'not_fake'}]})
+            return ({'extensions': [{'alias': 'fake1'},
+                                    {'alias': 'fake2'},
+                                    {'alias': 'not_fake'}]})
         fake_os = mock.MagicMock()
         fake_os.extensions_client.list_extensions = fake_list_extensions
         self.useFixture(mockpatch.PatchObject(
@@ -314,47 +308,8 @@ class TestDiscovery(base.TestCase):
                                                           'nova', {})
         self.assertIn('nova', results)
         self.assertIn('extensions', results['nova'])
-        self.assertEqual(['fake1', 'fake2', 'not_fake'],
-                         results['nova']['extensions'])
-
-    def test_verify_extensions_nova_v3(self):
-        def fake_list_extensions():
-            return (None, {'extensions': [{'alias': 'fake1'},
-                                          {'alias': 'fake2'},
-                                          {'alias': 'not_fake'}]})
-        fake_os = mock.MagicMock()
-        fake_os.extensions_v3_client.list_extensions = fake_list_extensions
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config, 'get_enabled_extensions',
-            return_value=(['fake1', 'fake2', 'fake3'])))
-        results = verify_tempest_config.verify_extensions(fake_os,
-                                                          'nova_v3', {})
-        self.assertIn('nova_v3', results)
-        self.assertIn('fake1', results['nova_v3'])
-        self.assertTrue(results['nova_v3']['fake1'])
-        self.assertIn('fake2', results['nova_v3'])
-        self.assertTrue(results['nova_v3']['fake2'])
-        self.assertIn('fake3', results['nova_v3'])
-        self.assertFalse(results['nova_v3']['fake3'])
-        self.assertIn('not_fake', results['nova_v3'])
-        self.assertFalse(results['nova_v3']['not_fake'])
-
-    def test_verify_extensions_nova_v3_all(self):
-        def fake_list_extensions():
-            return (None, {'extensions': [{'alias': 'fake1'},
-                                          {'alias': 'fake2'},
-                                          {'alias': 'not_fake'}]})
-        fake_os = mock.MagicMock()
-        fake_os.extensions_v3_client.list_extensions = fake_list_extensions
-        self.useFixture(mockpatch.PatchObject(
-            verify_tempest_config, 'get_enabled_extensions',
-            return_value=(['all'])))
-        results = verify_tempest_config.verify_extensions(fake_os,
-                                                          'nova_v3', {})
-        self.assertIn('nova_v3', results)
-        self.assertIn('extensions', results['nova_v3'])
-        self.assertEqual(['fake1', 'fake2', 'not_fake'],
-                         results['nova_v3']['extensions'])
+        self.assertEqual(sorted(['fake1', 'fake2', 'not_fake']),
+                         sorted(results['nova']['extensions']))
 
     def test_verify_extensions_swift(self):
         def fake_list_extensions():
@@ -393,5 +348,5 @@ class TestDiscovery(base.TestCase):
                                                           'swift', {})
         self.assertIn('swift', results)
         self.assertIn('extensions', results['swift'])
-        self.assertEqual(['not_fake', 'fake1', 'fake2'],
-                         results['swift']['extensions'])
+        self.assertEqual(sorted(['not_fake', 'fake1', 'fake2']),
+                         sorted(results['swift']['extensions']))

@@ -12,9 +12,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import uuid
 
 import mock
-from oslo.config import cfg
+from oslo_config import cfg
 from oslotest import mockpatch
 import testtools
 
@@ -48,13 +49,9 @@ class TestAttrDecorator(BaseDecoratorsTest):
     def test_attr_without_type(self):
         self._test_attr_helper(expected_attrs='baz', bar='baz')
 
-    def test_attr_decorator_with_smoke_type(self):
-        # smoke passed as type, so smoke and gate must have been set.
-        self._test_attr_helper(expected_attrs=['smoke', 'gate'], type='smoke')
-
     def test_attr_decorator_with_list_type(self):
-        # if type is 'smoke' we'll get the original list of types plus 'gate'
-        self._test_attr_helper(expected_attrs=['smoke', 'foo', 'gate'],
+        # if type is 'smoke' we'll get the original list of types
+        self._test_attr_helper(expected_attrs=['smoke', 'foo'],
                                type=['smoke', 'foo'])
 
     def test_attr_decorator_with_unknown_type(self):
@@ -62,6 +59,43 @@ class TestAttrDecorator(BaseDecoratorsTest):
 
     def test_attr_decorator_with_duplicated_type(self):
         self._test_attr_helper(expected_attrs=['foo'], type=['foo', 'foo'])
+
+
+class TestIdempotentIdDecorator(BaseDecoratorsTest):
+
+    def _test_helper(self, _id, **decorator_args):
+        @test.idempotent_id(_id)
+        def foo():
+            """Docstring"""
+            pass
+
+        return foo
+
+    def _test_helper_without_doc(self, _id, **decorator_args):
+        @test.idempotent_id(_id)
+        def foo():
+            pass
+
+        return foo
+
+    def test_positive(self):
+        _id = str(uuid.uuid4())
+        foo = self._test_helper(_id)
+        self.assertIn('id-%s' % _id, getattr(foo, '__testtools_attrs'))
+        self.assertTrue(foo.__doc__.startswith('Test idempotent id: %s' % _id))
+
+    def test_positive_without_doc(self):
+        _id = str(uuid.uuid4())
+        foo = self._test_helper_without_doc(_id)
+        self.assertTrue(foo.__doc__.startswith('Test idempotent id: %s' % _id))
+
+    def test_idempotent_id_not_str(self):
+        _id = 42
+        self.assertRaises(TypeError, self._test_helper, _id)
+
+    def test_idempotent_id_not_valid_uuid(self):
+        _id = '42'
+        self.assertRaises(ValueError, self._test_helper, _id)
 
 
 class TestServicesDecorator(BaseDecoratorsTest):
@@ -97,6 +131,28 @@ class TestServicesDecorator(BaseDecoratorsTest):
                           self._test_services_helper, 'compute',
                           'volume')
 
+    def test_services_list(self):
+        service_list = test.get_service_list()
+        for service in service_list:
+            try:
+                self._test_services_helper(service)
+            except exceptions.InvalidServiceTag:
+                self.fail('%s is not listed in the valid service tag list'
+                          % service)
+            except KeyError:
+                # NOTE(mtreinish): This condition is to test for a entry in
+                # the outer decorator list but not in the service_list dict.
+                # However, because we're looping over the service_list dict
+                # it's unlikely we'll trigger this. So manual review is still
+                # need for the list in the outer decorator.
+                self.fail('%s is in the list of valid service tags but there '
+                          'is no corresponding entry in the dict returned from'
+                          ' get_service_list()' % service)
+            except testtools.TestCase.skipException:
+                # Test didn't raise an exception because of an incorrect list
+                # entry so move onto the next entry
+                continue
+
 
 class TestStressDecorator(BaseDecoratorsTest):
     def _test_stresstest_helper(self, expected_frequency='process',
@@ -128,70 +184,6 @@ class TestStressDecorator(BaseDecoratorsTest):
                                      allow_inheritance=True)
 
 
-class TestSkipBecauseDecorator(BaseDecoratorsTest):
-    def _test_skip_because_helper(self, expected_to_skip=True,
-                                  **decorator_args):
-        class TestFoo(test.BaseTestCase):
-            _interface = 'json'
-
-            @test.skip_because(**decorator_args)
-            def test_bar(self):
-                return 0
-
-        t = TestFoo('test_bar')
-        if expected_to_skip:
-            self.assertRaises(testtools.TestCase.skipException, t.test_bar)
-        else:
-            # assert that test_bar returned 0
-            self.assertEqual(TestFoo('test_bar').test_bar(), 0)
-
-    def test_skip_because_bug(self):
-        self._test_skip_because_helper(bug='12345')
-
-    def test_skip_because_bug_and_interface_match(self):
-        self._test_skip_because_helper(bug='12346', interface='json')
-
-    def test_skip_because_bug_interface_not_match(self):
-        self._test_skip_because_helper(expected_to_skip=False,
-                                       bug='12347', interface='xml')
-
-    def test_skip_because_bug_and_condition_true(self):
-        self._test_skip_because_helper(bug='12348', condition=True)
-
-    def test_skip_because_bug_and_condition_false(self):
-        self._test_skip_because_helper(expected_to_skip=False,
-                                       bug='12349', condition=False)
-
-    def test_skip_because_bug_condition_false_and_interface_match(self):
-        """
-        Assure that only condition will be evaluated if both parameters are
-        passed.
-        """
-        self._test_skip_because_helper(expected_to_skip=False,
-                                       bug='12350', condition=False,
-                                       interface='json')
-
-    def test_skip_because_bug_condition_true_and_interface_not_match(self):
-        """
-        Assure that only condition will be evaluated if both parameters are
-        passed.
-        """
-        self._test_skip_because_helper(bug='12351', condition=True,
-                                       interface='xml')
-
-    def test_skip_because_bug_without_bug_never_skips(self):
-        """Never skip without a bug parameter."""
-        self._test_skip_because_helper(expected_to_skip=False,
-                                       condition=True)
-        self._test_skip_because_helper(expected_to_skip=False,
-                                       interface='json')
-
-    def test_skip_because_invalid_bug_number(self):
-        """Raise ValueError if with an invalid bug number"""
-        self.assertRaises(ValueError, self._test_skip_because_helper,
-                          bug='critical_bug')
-
-
 class TestRequiresExtDecorator(BaseDecoratorsTest):
     def setUp(self):
         super(TestRequiresExtDecorator, self).setUp()
@@ -221,8 +213,8 @@ class TestRequiresExtDecorator(BaseDecoratorsTest):
                                        service='compute')
 
     def test_requires_ext_decorator_with_all_ext_enabled(self):
-        # disable fixture so the default (all) is used.
-        self.config_fixture.cleanUp()
+        cfg.CONF.set_default('api_extensions', 'all',
+                             group='compute-feature-enabled')
         self._test_requires_ext_helper(expected_to_skip=False,
                                        extension='random_ext',
                                        service='compute')
@@ -237,7 +229,7 @@ class TestRequiresExtDecorator(BaseDecoratorsTest):
 class TestSimpleNegativeDecorator(BaseDecoratorsTest):
     @test.SimpleNegativeAutoTest
     class FakeNegativeJSONTest(test.NegativeAutoTest):
-        _schema_file = 'fake/schemas/file.json'
+        _schema = {}
 
     def test_testfunc_exist(self):
         self.assertIn("test_fake_negative", dir(self.FakeNegativeJSONTest))
@@ -247,4 +239,4 @@ class TestSimpleNegativeDecorator(BaseDecoratorsTest):
         obj = self.FakeNegativeJSONTest("test_fake_negative")
         self.assertIn("test_fake_negative", dir(obj))
         obj.test_fake_negative()
-        mock.assert_called_once_with(self.FakeNegativeJSONTest._schema_file)
+        mock.assert_called_once_with(self.FakeNegativeJSONTest._schema)

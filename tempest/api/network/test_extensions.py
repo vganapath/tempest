@@ -19,7 +19,6 @@ from tempest import test
 
 
 class ExtensionsTestJSON(base.BaseNetworkTest):
-    _interface = 'json'
 
     """
     Tests the following operations in the Neutron API using the REST client for
@@ -32,11 +31,8 @@ class ExtensionsTestJSON(base.BaseNetworkTest):
 
     """
 
-    @classmethod
-    def setUpClass(cls):
-        super(ExtensionsTestJSON, cls).setUpClass()
-
     @test.attr(type='smoke')
+    @test.idempotent_id('ef28c7e6-e646-4979-9d67-deb207bc5564')
     def test_list_show_extensions(self):
         # List available extensions for the tenant
         expected_alias = ['security-group', 'l3_agent_scheduler',
@@ -47,23 +43,20 @@ class ExtensionsTestJSON(base.BaseNetworkTest):
         expected_alias = [ext for ext in expected_alias if
                           test.is_extension_enabled(ext, 'network')]
         actual_alias = list()
-        resp, extensions = self.client.list_extensions()
-        self.assertEqual('200', resp['status'])
+        extensions = self.client.list_extensions()
         list_extensions = extensions['extensions']
         # Show and verify the details of the available extensions
         for ext in list_extensions:
             ext_name = ext['name']
             ext_alias = ext['alias']
             actual_alias.append(ext['alias'])
-            resp, ext_details = self.client.show_extension(ext_alias)
-            self.assertEqual('200', resp['status'])
+            ext_details = self.client.show_extension(ext_alias)
             ext_details = ext_details['extension']
 
             self.assertIsNotNone(ext_details)
             self.assertIn('updated', ext_details.keys())
             self.assertIn('name', ext_details.keys())
             self.assertIn('description', ext_details.keys())
-            self.assertIn('namespace', ext_details.keys())
             self.assertIn('links', ext_details.keys())
             self.assertIn('alias', ext_details.keys())
             self.assertEqual(ext_details['name'], ext_name)
@@ -75,7 +68,3 @@ class ExtensionsTestJSON(base.BaseNetworkTest):
         for e in expected_alias:
             if test.is_extension_enabled(e, 'network'):
                 self.assertIn(e, actual_alias)
-
-
-class ExtensionsTestXML(ExtensionsTestJSON):
-    _interface = 'xml'

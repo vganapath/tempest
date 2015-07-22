@@ -13,51 +13,39 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
-import urllib
+from oslo_serialization import jsonutils as json
+from six.moves.urllib import parse as urllib
 
-from tempest.api_schema.compute import flavors as common_schema
-from tempest.api_schema.compute import flavors_access as schema_access
-from tempest.api_schema.compute import flavors_extra_specs \
+from tempest.api_schema.response.compute.v2_1 import flavors as schema
+from tempest.api_schema.response.compute.v2_1 import flavors_access \
+    as schema_access
+from tempest.api_schema.response.compute.v2_1 import flavors_extra_specs \
     as schema_extra_specs
-from tempest.api_schema.compute.v2 import flavors as v2schema
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.common import service_client
 
 
-class FlavorsClientJSON(rest_client.RestClient):
+class FlavorsClient(service_client.ServiceClient):
 
-    def __init__(self, auth_provider):
-        super(FlavorsClientJSON, self).__init__(auth_provider)
-        self.service = CONF.compute.catalog_type
-
-    def list_flavors(self, params=None):
+    def list_flavors(self, detail=False, **params):
         url = 'flavors'
+        _schema = schema.list_flavors
+
+        if detail:
+            url += '/detail'
+            _schema = schema.list_flavors_details
         if params:
             url += '?%s' % urllib.urlencode(params)
 
         resp, body = self.get(url)
         body = json.loads(body)
-        self.validate_response(common_schema.list_flavors, resp, body)
-        return resp, body['flavors']
+        self.validate_response(_schema, resp, body)
+        return service_client.ResponseBodyList(resp, body['flavors'])
 
-    def list_flavors_with_detail(self, params=None):
-        url = 'flavors/detail'
-        if params:
-            url += '?%s' % urllib.urlencode(params)
-
-        resp, body = self.get(url)
+    def show_flavor(self, flavor_id):
+        resp, body = self.get("flavors/%s" % flavor_id)
         body = json.loads(body)
-        self.validate_response(v2schema.list_flavors_details, resp, body)
-        return resp, body['flavors']
-
-    def get_flavor_details(self, flavor_id):
-        resp, body = self.get("flavors/%s" % str(flavor_id))
-        body = json.loads(body)
-        self.validate_response(v2schema.create_get_flavor_details, resp, body)
-        return resp, body['flavor']
+        self.validate_response(schema.create_get_flavor_details, resp, body)
+        return service_client.ResponseBody(resp, body['flavor'])
 
     def create_flavor(self, name, ram, vcpus, disk, flavor_id, **kwargs):
         """Creates a new flavor or instance type."""
@@ -80,24 +68,29 @@ class FlavorsClientJSON(rest_client.RestClient):
         resp, body = self.post('flavors', post_body)
 
         body = json.loads(body)
-        self.validate_response(v2schema.create_get_flavor_details, resp, body)
-        return resp, body['flavor']
+        self.validate_response(schema.create_get_flavor_details, resp, body)
+        return service_client.ResponseBody(resp, body['flavor'])
 
     def delete_flavor(self, flavor_id):
         """Deletes the given flavor."""
         resp, body = self.delete("flavors/{0}".format(flavor_id))
-        self.validate_response(v2schema.delete_flavor, resp, body)
-        return resp, body
+        self.validate_response(schema.delete_flavor, resp, body)
+        return service_client.ResponseBody(resp, body)
 
     def is_resource_deleted(self, id):
-        # Did not use get_flavor_details(id) for verification as it gives
+        # Did not use show_flavor(id) for verification as it gives
         # 200 ok even for deleted id. LP #981263
         # we can remove the loop here and use get by ID when bug gets sortedout
-        resp, flavors = self.list_flavors_with_detail()
+        flavors = self.list_flavors(detail=True)
         for flavor in flavors:
             if flavor['id'] == id:
                 return False
         return True
+
+    @property
+    def resource_type(self):
+        """Returns the primary type of resource this client works with."""
+        return 'flavor'
 
     def set_flavor_extra_spec(self, flavor_id, specs):
         """Sets extra Specs to the mentioned flavor."""
@@ -105,42 +98,44 @@ class FlavorsClientJSON(rest_client.RestClient):
         resp, body = self.post('flavors/%s/os-extra_specs' % flavor_id,
                                post_body)
         body = json.loads(body)
-        self.validate_response(schema_extra_specs.flavor_extra_specs,
+        self.validate_response(schema_extra_specs.set_get_flavor_extra_specs,
                                resp, body)
-        return resp, body['extra_specs']
+        return service_client.ResponseBody(resp, body['extra_specs'])
 
-    def get_flavor_extra_spec(self, flavor_id):
+    def list_flavor_extra_specs(self, flavor_id):
         """Gets extra Specs details of the mentioned flavor."""
         resp, body = self.get('flavors/%s/os-extra_specs' % flavor_id)
         body = json.loads(body)
-        self.validate_response(schema_extra_specs.flavor_extra_specs,
+        self.validate_response(schema_extra_specs.set_get_flavor_extra_specs,
                                resp, body)
-        return resp, body['extra_specs']
+        return service_client.ResponseBody(resp, body['extra_specs'])
 
-    def get_flavor_extra_spec_with_key(self, flavor_id, key):
+    def show_flavor_extra_spec(self, flavor_id, key):
         """Gets extra Specs key-value of the mentioned flavor and key."""
-        resp, body = self.get('flavors/%s/os-extra_specs/%s' % (str(flavor_id),
+        resp, body = self.get('flavors/%s/os-extra_specs/%s' % (flavor_id,
                               key))
         body = json.loads(body)
-        self.validate_response(schema_extra_specs.flavor_extra_specs_key,
-                               resp, body)
-        return resp, body
+        self.validate_response(
+            schema_extra_specs.set_get_flavor_extra_specs_key,
+            resp, body)
+        return service_client.ResponseBody(resp, body)
 
     def update_flavor_extra_spec(self, flavor_id, key, **kwargs):
         """Update specified extra Specs of the mentioned flavor and key."""
         resp, body = self.put('flavors/%s/os-extra_specs/%s' %
                               (flavor_id, key), json.dumps(kwargs))
         body = json.loads(body)
-        self.validate_response(schema_extra_specs.flavor_extra_specs_key,
-                               resp, body)
-        return resp, body
+        self.validate_response(
+            schema_extra_specs.set_get_flavor_extra_specs_key,
+            resp, body)
+        return service_client.ResponseBody(resp, body)
 
     def unset_flavor_extra_spec(self, flavor_id, key):
         """Unsets extra Specs from the mentioned flavor."""
         resp, body = self.delete('flavors/%s/os-extra_specs/%s' %
-                                 (str(flavor_id), key))
-        self.validate_response(v2schema.unset_flavor_extra_specs, resp, body)
-        return resp, body
+                                 (flavor_id, key))
+        self.validate_response(schema.unset_flavor_extra_specs, resp, body)
+        return service_client.ResponseBody(resp, body)
 
     def list_flavor_access(self, flavor_id):
         """Gets flavor access information given the flavor id."""
@@ -148,7 +143,7 @@ class FlavorsClientJSON(rest_client.RestClient):
         body = json.loads(body)
         self.validate_response(schema_access.add_remove_list_flavor_access,
                                resp, body)
-        return resp, body['flavor_access']
+        return service_client.ResponseBodyList(resp, body['flavor_access'])
 
     def add_flavor_access(self, flavor_id, tenant_id):
         """Add flavor access for the specified tenant."""
@@ -162,7 +157,7 @@ class FlavorsClientJSON(rest_client.RestClient):
         body = json.loads(body)
         self.validate_response(schema_access.add_remove_list_flavor_access,
                                resp, body)
-        return resp, body['flavor_access']
+        return service_client.ResponseBodyList(resp, body['flavor_access'])
 
     def remove_flavor_access(self, flavor_id, tenant_id):
         """Remove flavor access from the specified tenant."""
@@ -176,4 +171,4 @@ class FlavorsClientJSON(rest_client.RestClient):
         body = json.loads(body)
         self.validate_response(schema_access.add_remove_list_flavor_access,
                                resp, body)
-        return resp, body['flavor_access']
+        return service_client.ResponseBody(resp, body['flavor_access'])

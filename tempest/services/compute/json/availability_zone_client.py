@@ -13,31 +13,24 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
+from oslo_serialization import jsonutils as json
 
-from tempest.api_schema.compute.v2 import availability_zone as schema
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.api_schema.response.compute.v2_1 import availability_zone \
+    as schema
+from tempest.common import service_client
 
 
-class AvailabilityZoneClientJSON(rest_client.RestClient):
+class AvailabilityZoneClient(service_client.ServiceClient):
 
-    def __init__(self, auth_provider):
-        super(AvailabilityZoneClientJSON, self).__init__(
-            auth_provider)
-        self.service = CONF.compute.catalog_type
+    def list_availability_zones(self, detail=False):
+        url = 'os-availability-zone'
+        schema_list = schema.list_availability_zone_list
+        if detail:
+            url += '/detail'
+            schema_list = schema.list_availability_zone_list_detail
 
-    def get_availability_zone_list(self):
-        resp, body = self.get('os-availability-zone')
+        resp, body = self.get(url)
         body = json.loads(body)
-        self.validate_response(schema.get_availability_zone_list, resp, body)
-        return resp, body['availabilityZoneInfo']
-
-    def get_availability_zone_list_detail(self):
-        resp, body = self.get('os-availability-zone/detail')
-        body = json.loads(body)
-        self.validate_response(schema.get_availability_zone_list_detail, resp,
-                               body)
-        return resp, body['availabilityZoneInfo']
+        self.validate_response(schema_list, resp, body)
+        return service_client.ResponseBodyList(resp,
+                                               body['availabilityZoneInfo'])

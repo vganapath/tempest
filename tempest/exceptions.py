@@ -51,10 +51,6 @@ class RestClientException(TempestException,
     pass
 
 
-class RFCViolation(RestClientException):
-    message = "RFC Violation"
-
-
 class InvalidConfiguration(TempestException):
     message = "Invalid Configuration"
 
@@ -63,20 +59,12 @@ class InvalidCredentials(TempestException):
     message = "Invalid Credentials"
 
 
-class InvalidHttpSuccessCode(RestClientException):
-    message = "The success code is different than the expected one"
-
-
-class NotFound(RestClientException):
-    message = "Object not found"
-
-
-class Unauthorized(RestClientException):
-    message = 'Unauthorized'
-
-
-class InvalidServiceTag(RestClientException):
+class InvalidServiceTag(TempestException):
     message = "Invalid service tag"
+
+
+class InvalidIdentityVersion(TempestException):
+    message = "Invalid version %(identity_version) of the identity service"
 
 
 class TimeoutException(TempestException):
@@ -123,33 +111,13 @@ class StackResourceBuildErrorException(TempestException):
                "'%(resource_status_reason)s'")
 
 
-class BadRequest(RestClientException):
-    message = "Bad request"
-
-
-class UnprocessableEntity(RestClientException):
-    message = "Unprocessable entity"
-
-
-class AuthenticationFailure(RestClientException):
+class AuthenticationFailure(TempestException):
     message = ("Authentication with user %(user)s and password "
                "%(password)s failed auth using tenant %(tenant)s.")
 
 
 class EndpointNotFound(TempestException):
     message = "Endpoint not found"
-
-
-class RateLimitExceeded(TempestException):
-    message = "Rate limit exceeded"
-
-
-class OverLimit(TempestException):
-    message = "Quota exceeded"
-
-
-class ServerFault(TempestException):
-    message = "Got server fault"
 
 
 class ImageFault(TempestException):
@@ -160,27 +128,24 @@ class IdentityError(TempestException):
     message = "Got identity error"
 
 
-class Conflict(RestClientException):
-    message = "An object with that identifier already exists"
-
-
-class SSHTimeout(TempestException):
-    message = ("Connection to the %(host)s via SSH timed out.\n"
-               "User: %(user)s, Password: %(password)s")
-
-
-class SSHExecCommandFailed(TempestException):
-    """Raised when remotely executed command returns nonzero status."""
-    message = ("Command '%(command)s', exit status: %(exit_status)d, "
-               "Error:\n%(strerror)s")
-
-
 class ServerUnreachable(TempestException):
     message = "The server is not reachable via the configured network"
 
 
 class TearDownException(TempestException):
     message = "%(num)d cleanUp operation failed"
+
+
+class RFCViolation(RestClientException):
+    message = "RFC Violation"
+
+
+class InvalidHttpSuccessCode(RestClientException):
+    message = "The success code is different than the expected one"
+
+
+class BadRequest(RestClientException):
+    message = "Bad request"
 
 
 class ResponseWithNonEmptyBody(RFCViolation):
@@ -193,21 +158,26 @@ class ResponseWithEntity(RFCViolation):
                "MUST NOT have an entity")
 
 
-class InvalidHTTPResponseBody(RestClientException):
-    message = "HTTP response body is invalid json or xml"
-
-
 class InvalidHTTPResponseHeader(RestClientException):
     message = "HTTP response header is invalid"
 
 
-class InvalidContentType(RestClientException):
-    message = "Invalid content type provided"
-
-
-class UnexpectedResponseCode(RestClientException):
-    message = "Unexpected response code received"
-
-
 class InvalidStructure(TempestException):
     message = "Invalid structure of table with details"
+
+
+class CommandFailed(Exception):
+    def __init__(self, returncode, cmd, output, stderr):
+        super(CommandFailed, self).__init__()
+        self.returncode = returncode
+        self.cmd = cmd
+        self.stdout = output
+        self.stderr = stderr
+
+    def __str__(self):
+        return ("Command '%s' returned non-zero exit status %d.\n"
+                "stdout:\n%s\n"
+                "stderr:\n%s" % (self.cmd,
+                                 self.returncode,
+                                 self.stdout,
+                                 self.stderr))

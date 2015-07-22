@@ -17,19 +17,21 @@
 
 import copy
 import hashlib
-import httplib
-import json
-import OpenSSL
 import posixpath
 import re
-from six import moves
 import socket
-import StringIO
 import struct
-import urlparse
+
+import OpenSSL
+from oslo_log import log as logging
+from oslo_serialization import jsonutils as json
+import six
+from six import moves
+from six.moves import http_client as httplib
+from six.moves.urllib import parse as urlparse
+from tempest_lib import exceptions as lib_exc
 
 from tempest import exceptions as exc
-from tempest.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
 USER_AGENT = 'tempest'
@@ -65,7 +67,7 @@ class HTTPClient(object):
         _kwargs = {'timeout': float(kwargs.get('timeout', 600))}
 
         if scheme == 'https':
-            _kwargs['cacert'] = kwargs.get('cacert', None)
+            _kwargs['ca_certs'] = kwargs.get('ca_certs', None)
             _kwargs['cert_file'] = kwargs.get('cert_file', None)
             _kwargs['key_file'] = kwargs.get('key_file', None)
             _kwargs['insecure'] = kwargs.get('insecure', False)
@@ -126,7 +128,7 @@ class HTTPClient(object):
         # Read body into string if it isn't obviously image data
         if resp.getheader('content-type', None) != 'application/octet-stream':
             body_str = ''.join([body_chunk for body_chunk in body_iter])
-            body_iter = StringIO.StringIO(body_str)
+            body_iter = six.StringIO(body_str)
             self._log_response(resp, None)
         else:
             self._log_response(resp, body_iter)
@@ -160,6 +162,9 @@ class HTTPClient(object):
     def json_request(self, method, url, **kwargs):
         kwargs.setdefault('headers', {})
         kwargs['headers'].setdefault('Content-Type', 'application/json')
+        if kwargs['headers']['Content-Type'] != 'application/json':
+            msg = "Only application/json content-type is supported."
+            raise lib_exc.InvalidContentType(msg)
 
         if 'body' in kwargs:
             kwargs['body'] = json.dumps(kwargs['body'])
@@ -173,7 +178,8 @@ class HTTPClient(object):
             except ValueError:
                 LOG.error('Could not decode response body as JSON')
         else:
-            body = None
+            msg = "Only json/application content-type is supported."
+            raise lib_exc.InvalidContentType(msg)
 
         return resp, body
 
@@ -226,7 +232,7 @@ class VerifiedHTTPSConnection(httplib.HTTPSConnection):
           with native Python 3.3 code.
     """
     def __init__(self, host, port=None, key_file=None, cert_file=None,
-                 cacert=None, timeout=None, insecure=False,
+                 ca_certs=None, timeout=None, insecure=False,
                  ssl_compression=True):
         httplib.HTTPSConnection.__init__(self, host, port,
                                          key_file=key_file,
@@ -236,7 +242,7 @@ class VerifiedHTTPSConnection(httplib.HTTPSConnection):
         self.timeout = timeout
         self.insecure = insecure
         self.ssl_compression = ssl_compression
-        self.cacert = cacert
+        self.ca_certs = ca_certs
         self.setcontext()
 
     @staticmethod
@@ -320,11 +326,11 @@ class VerifiedHTTPSConnection(httplib.HTTPSConnection):
                 msg = 'Unable to load key from "%s" %s' % (self.key_file, e)
                 raise exc.SSLConfigurationError(msg)
 
-        if self.cacert:
+        if self.ca_certs:
             try:
-                self.context.load_verify_locations(self.cacert)
+                self.context.load_verify_locations(self.ca_certs)
             except Exception as e:
-                msg = 'Unable to load CA from "%s"' % (self.cacert, e)
+                msg = 'Unable to load CA from "%s"' % (self.ca_certs, e)
                 raise exc.SSLConfigurationError(msg)
         else:
             self.context.set_default_verify_paths()

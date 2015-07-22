@@ -13,22 +13,21 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
+from oslo_serialization import jsonutils as json
 
-from tempest.common import rest_client
-from tempest import config
-
-CONF = config.CONF
+from tempest.common import service_client
 
 
-class VolumeAvailabilityZoneClientJSON(rest_client.RestClient):
+class BaseVolumeAvailabilityZoneClient(service_client.ServiceClient):
 
-    def __init__(self, auth_provider):
-        super(VolumeAvailabilityZoneClientJSON, self).__init__(
-            auth_provider)
-        self.service = CONF.volume.catalog_type
-
-    def get_availability_zone_list(self):
+    def list_availability_zones(self):
         resp, body = self.get('os-availability-zone')
         body = json.loads(body)
-        return resp, body['availabilityZoneInfo']
+        self.expected_success(200, resp.status)
+        return service_client.ResponseBody(resp, body['availabilityZoneInfo'])
+
+
+class VolumeAvailabilityZoneClient(BaseVolumeAvailabilityZoneClient):
+    """
+    Volume V1 availability zone client.
+    """

@@ -13,26 +13,20 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
 import time
 
-from tempest.common import rest_client
-from tempest import config
+from oslo_serialization import jsonutils as json
+
+from tempest_lib import exceptions as lib_exc
+
+from tempest.common import service_client
 from tempest import exceptions
 
-CONF = config.CONF
 
-
-class BackupsClientJSON(rest_client.RestClient):
+class BaseBackupsClient(service_client.ServiceClient):
     """
     Client class to send CRUD Volume backup API requests to a Cinder endpoint
     """
-
-    def __init__(self, auth_provider):
-        super(BackupsClientJSON, self).__init__(auth_provider)
-        self.service = CONF.volume.catalog_type
-        self.build_interval = CONF.volume.build_interval
-        self.build_timeout = CONF.volume.build_timeout
 
     def create_backup(self, volume_id, container=None, name=None,
                       description=None):
@@ -47,7 +41,8 @@ class BackupsClientJSON(rest_client.RestClient):
         post_body = json.dumps({'backup': post_body})
         resp, body = self.post('backups', post_body)
         body = json.loads(body)
-        return resp, body['backup']
+        self.expected_success(202, resp.status)
+        return service_client.ResponseBody(resp, body['backup'])
 
     def restore_backup(self, backup_id, volume_id=None):
         """Restore volume from backup."""
@@ -55,42 +50,83 @@ class BackupsClientJSON(rest_client.RestClient):
         post_body = json.dumps({'restore': post_body})
         resp, body = self.post('backups/%s/restore' % (backup_id), post_body)
         body = json.loads(body)
-        return resp, body['restore']
+        self.expected_success(202, resp.status)
+        return service_client.ResponseBody(resp, body['restore'])
 
     def delete_backup(self, backup_id):
         """Delete a backup of volume."""
         resp, body = self.delete('backups/%s' % (str(backup_id)))
-        return resp, body
+        self.expected_success(202, resp.status)
+        return service_client.ResponseBody(resp, body)
 
-    def get_backup(self, backup_id):
+    def show_backup(self, backup_id):
         """Returns the details of a single backup."""
         url = "backups/%s" % str(backup_id)
         resp, body = self.get(url)
         body = json.loads(body)
-        return resp, body['backup']
+        self.expected_success(200, resp.status)
+        return service_client.ResponseBody(resp, body['backup'])
 
-    def list_backups_with_detail(self):
+    def list_backups(self, detail=False):
         """Information for all the tenant's backups."""
-        url = "backups/detail"
+        url = "backups"
+        if detail:
+            url += "/detail"
         resp, body = self.get(url)
         body = json.loads(body)
-        return resp, body['backups']
+        self.expected_success(200, resp.status)
+        return service_client.ResponseBodyList(resp, body['backups'])
+
+    def export_backup(self, backup_id):
+        """Export backup metadata record."""
+        url = "backups/%s/export_record" % backup_id
+        resp, body = self.get(url)
+        body = json.loads(body)
+        self.expected_success(200, resp.status)
+        return service_client.ResponseBody(resp, body['backup-record'])
+
+    def import_backup(self, backup_service, backup_url):
+        """Import backup metadata record."""
+        post_body = {'backup_service': backup_service,
+                     'backup_url': backup_url}
+        post_body = json.dumps({'backup-record': post_body})
+        resp, body = self.post("backups/import_record", post_body)
+        body = json.loads(body)
+        self.expected_success(201, resp.status)
+        return service_client.ResponseBody(resp, body['backup'])
 
     def wait_for_backup_status(self, backup_id, status):
         """Waits for a Backup to reach a given status."""
-        resp, body = self.get_backup(backup_id)
+        body = self.show_backup(backup_id)
         backup_status = body['status']
         start = int(time.time())
 
         while backup_status != status:
             time.sleep(self.build_interval)
-            resp, body = self.get_backup(backup_id)
+            body = self.show_backup(backup_id)
             backup_status = body['status']
             if backup_status == 'error':
                 raise exceptions.VolumeBackupException(backup_id=backup_id)
 
             if int(time.time()) - start >= self.build_timeout:
-                message = ('Volume backup %s failed to reach %s status within '
-                           'the required time (%s s).' %
-                           (backup_id, status, self.build_timeout))
+                message = ('Volume backup %s failed to reach %s status '
+                           '(current %s) within the required time (%s s).' %
+                           (backup_id, status, backup_status,
+                            self.build_timeout))
                 raise exceptions.TimeoutException(message)
+
+    def wait_for_backup_deletion(self, backup_id):
+        """Waits for backup deletion"""
+        start_time = int(time.time())
+        while True:
+            try:
+                self.show_backup(backup_id)
+            except lib_exc.NotFound:
+                return
+            if int(time.time()) - start_time >= self.build_timeout:
+                raise exceptions.TimeoutException
+            time.sleep(self.build_interval)
+
+
+class BackupsClient(BaseBackupsClient):
+    """Volume V1 Backups client"""
