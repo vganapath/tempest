@@ -151,6 +151,7 @@ then
     fi
   fi
 fi
+${wrapper} pip install python-novaclient python-neutronclient python-glanceclient || exit 1
 
 if [ $populate_config -eq 1 ]; then
    (unset http_proxy && ./contrail/contrail-tempest-init.sh)
