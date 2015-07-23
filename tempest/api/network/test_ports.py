@@ -52,7 +52,7 @@ class PortsTestJSON(sec_base.BaseSecGroupTest):
         ports_list = body['ports']
         self.assertFalse(port_id in [n['id'] for n in ports_list])
 
-    @test.skip_because(bug='1474804')
+    @decorators.skip_because(bug='1474804')
     @test.attr(type='smoke')
     @test.idempotent_id('c72c1c0c-2193-4aca-aaa4-b1442640f51c')
     def test_create_update_delete_port(self):
