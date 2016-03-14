@@ -120,7 +120,7 @@ function apply_patches {
   git apply contrail/bug_1373245.patch
 }
 
-sudo apt-get install -y git sshpass libxml2-dev libxslt-dev python-dev libffi-dev gcc lib32z1-dev libssl-dev || exit 1
+sudo apt-get install -y git sshpass libxml2-dev libxslt-dev python-dev libffi-dev gcc lib32z1-dev libssl-dev lib32z1 lib32c-dev || exit 1
 
 if [ $never_venv -eq 0 ]
 then
