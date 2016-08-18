@@ -1,6 +1,21 @@
 
 with_venv=tools/with_venv.sh
 
+##sku_dict = {'2014.1': 'icehouse', '2014.2': 'juno', '2015.1': 'kilo', '12.0': 'liberty', '13.0': 'mitaka'}
+
+declare -A sku_dict
+sku_dict['2014.1']='icehouse'
+sku_dict['2014.2']='juno'
+sku_dict['2015.1.2']='kilo'
+sku_dict['12.0']='liberty'
+sku_dict['13.0']='mitaka'
+
+function get_sku() {
+    ver=`${with_venv} nova-manage version`
+    #echo ${sku_dict[${ver}]}
+    echo ${sku_dict[${ver}]}
+}
+
 # Determinate is the given option present in the INI file
 # ini_has_option config-file section option
 function ini_has_option() {
@@ -44,6 +59,7 @@ function get_image_id() {
     local keystone_host=$1
     local image_name=$2
     local image_path=$3
+    local sku=$4
     images=`${with_venv} nova image-list`
     #if grep -q $image_name $images; then
     if [[ "$images" == *\ ${image_name}\ * ]];then
@@ -53,7 +69,11 @@ function get_image_id() {
         if [ ! -f $image_filename ]; then
             `wget $image_path --no-check-certificate`
         fi
-        export OS_IMAGE_URL=http://${keystone_host}:9292/ && ${with_venv} glance image-create --name $image_name --disk-format qcow2 --container-format bare  --file $image_filename --visibility public > /dev/null
+        if [[ "$sku" < "l" ]]; then
+            export OS_IMAGE_URL=http://${keystone_host}:9292/ && ${with_venv} glance image-create --name $image_name --disk-format qcow2 --container-format bare --is-public True --file $image_filename > /dev/null
+        else
+            export OS_IMAGE_URL=http://${keystone_host}:9292/ && ${with_venv} glance image-create --name $image_name --disk-format qcow2 --container-format bare  --file $image_filename --visibility public > /dev/null
+        fi
         image_id=`${with_venv} nova image-list | grep " $image_name "  | awk {'print $2'}`
     fi
     echo $image_id
@@ -99,4 +119,16 @@ function create_public_network() {
     sshpass -p $API_SERVER_HOST_PASSWORD ssh $SSHOPT ${API_SERVER_HOST_USER}@${API_SERVER_IP} "python /opt/contrail/utils/add_route_target.py --routing_instance_name $PUBLIC_NETWORK_RI_FQ_NAME --route_target_number $PUBLIC_NETWORK_RT --router_asn $ROUTER_ASN --api_server_ip $API_SERVER_IP --api_server_port 8082 --admin_user $OS_USERNAME --admin_password $OS_PASSWORD --admin_tenant_name $OS_TENANT_NAME" || echo "Unable to set route target on the public vn!!"
 }
 
+function create_flavor() {
+    local id=$1
+    local name='tempest_flavor'
+    local ram=512
+    local disk=1
+    local vCPU=1
+    if ${with_venv} nova flavor-show $id >/dev/null 2>&1 ; then
+        echo "flavor $id already present, not creating"
+    else
+        nova flavor-create $name $id $ram $disk $vCPU
+    fi
+}
 
