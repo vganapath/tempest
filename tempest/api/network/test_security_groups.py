@@ -15,7 +15,7 @@
 
 import six
 
-from tempest_lib import decorators
+from tempest.lib import decorators
 
 from tempest.api.network import base_security_groups as base
 from tempest.common.utils import data_utils
@@ -26,7 +26,7 @@ CONF = config.CONF
 
 
 class SecGroupTest(base.BaseSecGroupTest):
-    _tenant_network_cidr = CONF.network.tenant_network_cidr
+    _project_network_cidr = CONF.network.project_network_cidr
 
     @classmethod
     def skip_checks(cls):
@@ -43,7 +43,8 @@ class SecGroupTest(base.BaseSecGroupTest):
                                            remote_ip_prefix=None):
         # Create Security Group rule with the input params and validate
         # that SG rule is created with the same parameters.
-        rule_create_body = self.client.create_security_group_rule(
+        sec_group_rules_client = self.security_group_rules_client
+        rule_create_body = sec_group_rules_client.create_security_group_rule(
             security_group_id=sg_id,
             direction=direction,
             ethertype=ethertype,
@@ -72,8 +73,8 @@ class SecGroupTest(base.BaseSecGroupTest):
     @test.attr(type='smoke')
     @test.idempotent_id('e30abd17-fef9-4739-8617-dc26da88e686')
     def test_list_security_groups(self):
-        # Verify the that security group belonging to tenant exist in list
-        body = self.client.list_security_groups()
+        # Verify the that security group belonging to project exist in list
+        body = self.security_groups_client.list_security_groups()
         security_groups = body['security_groups']
         found = None
         for n in security_groups:
@@ -89,7 +90,7 @@ class SecGroupTest(base.BaseSecGroupTest):
         group_create_body, name = self._create_security_group()
 
         # List security groups and verify if created group is there in response
-        list_body = self.client.list_security_groups()
+        list_body = self.security_groups_client.list_security_groups()
         secgroup_list = list()
         for secgroup in list_body['security_groups']:
             secgroup_list.append(secgroup['id'])
@@ -97,7 +98,7 @@ class SecGroupTest(base.BaseSecGroupTest):
         # Update the security group
         new_name = data_utils.rand_name('security-')
         new_description = data_utils.rand_name('security-description')
-        update_body = self.client.update_security_group(
+        update_body = self.security_groups_client.update_security_group(
             group_create_body['security_group']['id'],
             name=new_name,
             description=new_description)
@@ -106,7 +107,7 @@ class SecGroupTest(base.BaseSecGroupTest):
         self.assertEqual(update_body['security_group']['description'],
                          new_description)
         # Show details of the updated security group
-        show_body = self.client.show_security_group(
+        show_body = self.security_groups_client.show_security_group(
             group_create_body['security_group']['id'])
         self.assertEqual(show_body['security_group']['name'], new_name)
         self.assertEqual(show_body['security_group']['description'],
@@ -119,8 +120,9 @@ class SecGroupTest(base.BaseSecGroupTest):
 
         # Create rules for each protocol
         protocols = ['tcp', 'udp', 'icmp']
+        client = self.security_group_rules_client
         for protocol in protocols:
-            rule_create_body = self.client.create_security_group_rule(
+            rule_create_body = client.create_security_group_rule(
                 security_group_id=group_create_body['security_group']['id'],
                 protocol=protocol,
                 direction='ingress',
@@ -128,7 +130,7 @@ class SecGroupTest(base.BaseSecGroupTest):
             )
 
             # Show details of the created security rule
-            show_rule_body = self.client.show_security_group_rule(
+            show_rule_body = client.show_security_group_rule(
                 rule_create_body['security_group_rule']['id']
             )
             create_dict = rule_create_body['security_group_rule']
@@ -138,7 +140,8 @@ class SecGroupTest(base.BaseSecGroupTest):
                                  "%s does not match." % key)
 
             # List rules and verify created rule is in response
-            rule_list_body = self.client.list_security_group_rules()
+            rule_list_body = (
+                self.security_group_rules_client.list_security_group_rules())
             rule_list = [rule['id']
                          for rule in rule_list_body['security_group_rules']]
             self.assertIn(rule_create_body['security_group_rule']['id'],
@@ -211,7 +214,7 @@ class SecGroupTest(base.BaseSecGroupTest):
         protocol = 'tcp'
         port_range_min = 76
         port_range_max = 77
-        ip_prefix = self._tenant_network_cidr
+        ip_prefix = self._project_network_cidr
         self._create_verify_security_group_rule(sg_id, direction,
                                                 self.ethertype, protocol,
                                                 port_range_min,
@@ -227,7 +230,8 @@ class SecGroupTest(base.BaseSecGroupTest):
         direction = 'ingress'
         protocol = 17
         security_group_id = group_create_body['security_group']['id']
-        rule_create_body = self.client.create_security_group_rule(
+        client = self.security_group_rules_client
+        rule_create_body = client.create_security_group_rule(
             security_group_id=security_group_id,
             direction=direction,
             protocol=protocol
@@ -239,4 +243,4 @@ class SecGroupTest(base.BaseSecGroupTest):
 
 class SecGroupIPv6Test(SecGroupTest):
     _ip_version = 6
-    _tenant_network_cidr = CONF.network.tenant_network_v6_cidr
+    _project_network_cidr = CONF.network.project_network_v6_cidr

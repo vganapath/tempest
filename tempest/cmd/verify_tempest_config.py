@@ -16,20 +16,26 @@
 
 import argparse
 import os
+import re
 import sys
+import traceback
 
-import httplib2
+from cliff import command
+from oslo_log import log as logging
 from oslo_serialization import jsonutils as json
 from six import moves
 from six.moves.urllib import parse as urlparse
 
 from tempest import clients
-from tempest.common import credentials
+from tempest.common import credentials_factory as credentials
 from tempest import config
+import tempest.lib.common.http
 
 
 CONF = config.CONF
 CONF_PARSER = None
+
+LOG = logging.getLogger(__name__)
 
 
 def _get_config_file():
@@ -65,16 +71,23 @@ def verify_glance_api_versions(os, update):
     # Check glance api versions
     _, versions = os.image_client.get_versions()
     if CONF.image_feature_enabled.api_v1 != contains_version('v1.', versions):
-        print_and_or_update('api_v1', 'image_feature_enabled',
+        print_and_or_update('api_v1', 'image-feature-enabled',
                             not CONF.image_feature_enabled.api_v1, update)
     if CONF.image_feature_enabled.api_v2 != contains_version('v2.', versions):
-        print_and_or_update('api_v2', 'image_feature_enabled',
+        print_and_or_update('api_v2', 'image-feature-enabled',
                             not CONF.image_feature_enabled.api_v2, update)
+
+
+def _remove_version_project(url_path):
+    # The regex matches strings like /v2.0, /v3/, /v2.1/project-id/
+    return re.sub(r'/v\d+(\.\d+)?(/[^/]+)?', '', url_path)
 
 
 def _get_unversioned_endpoint(base_url):
     endpoint_parts = urlparse.urlparse(base_url)
-    endpoint = endpoint_parts.scheme + '://' + endpoint_parts.netloc
+    new_path = _remove_version_project(endpoint_parts.path)
+    endpoint_parts = endpoint_parts._replace(path=new_path)
+    endpoint = urlparse.urlunparse(endpoint_parts)
     return endpoint
 
 
@@ -84,15 +97,25 @@ def _get_api_versions(os, service):
         'keystone': os.identity_client,
         'cinder': os.volumes_client,
     }
-    client_dict[service].skip_path()
+    if service != 'keystone':
+        # Since keystone may be listening on a path, do not remove the path.
+        client_dict[service].skip_path()
     endpoint = _get_unversioned_endpoint(client_dict[service].base_url)
-    dscv = CONF.identity.disable_ssl_certificate_validation
-    ca_certs = CONF.identity.ca_certificates_file
-    raw_http = httplib2.Http(disable_ssl_certificate_validation=dscv,
-                             ca_certs=ca_certs)
-    __, body = raw_http.request(endpoint, 'GET')
+
+    http = tempest.lib.common.http.ClosingHttp(
+        CONF.service_clients.disable_ssl_certificate_validation,
+        CONF.service_clients.ca_certificates_file)
+
+    __, body = http.request(endpoint, 'GET')
     client_dict[service].reset_path()
-    body = json.loads(body)
+    try:
+        body = json.loads(body)
+    except ValueError:
+        LOG.error(
+            'Failed to get a JSON response from unversioned endpoint %s '
+            '(versioned endpoint was %s). Response is:\n%s',
+            endpoint, client_dict[service].base_url, body[:100])
+        raise
     if service == 'keystone':
         versions = map(lambda x: x['id'], body['versions']['values'])
     else:
@@ -105,11 +128,11 @@ def verify_keystone_api_versions(os, update):
     versions = _get_api_versions(os, 'keystone')
     if (CONF.identity_feature_enabled.api_v2 !=
             contains_version('v2.', versions)):
-        print_and_or_update('api_v2', 'identity_feature_enabled',
+        print_and_or_update('api_v2', 'identity-feature-enabled',
                             not CONF.identity_feature_enabled.api_v2, update)
     if (CONF.identity_feature_enabled.api_v3 !=
             contains_version('v3.', versions)):
-        print_and_or_update('api_v3', 'identity_feature_enabled',
+        print_and_or_update('api_v3', 'identity-feature-enabled',
                             not CONF.identity_feature_enabled.api_v3, update)
 
 
@@ -118,12 +141,16 @@ def verify_cinder_api_versions(os, update):
     versions = _get_api_versions(os, 'cinder')
     if (CONF.volume_feature_enabled.api_v1 !=
             contains_version('v1.', versions)):
-        print_and_or_update('api_v1', 'volume_feature_enabled',
+        print_and_or_update('api_v1', 'volume-feature-enabled',
                             not CONF.volume_feature_enabled.api_v1, update)
     if (CONF.volume_feature_enabled.api_v2 !=
             contains_version('v2.', versions)):
-        print_and_or_update('api_v2', 'volume_feature_enabled',
+        print_and_or_update('api_v2', 'volume-feature-enabled',
                             not CONF.volume_feature_enabled.api_v2, update)
+    if (CONF.volume_feature_enabled.api_v3 !=
+            contains_version('v3.', versions)):
+        print_and_or_update('api_v3', 'volume-feature-enabled',
+                            not CONF.volume_feature_enabled.api_v3, update)
 
 
 def verify_api_versions(os, service, update):
@@ -141,12 +168,18 @@ def get_extension_client(os, service):
     extensions_client = {
         'nova': os.extensions_client,
         'cinder': os.volumes_extension_client,
-        'neutron': os.network_client,
+        'neutron': os.network_extensions_client,
         'swift': os.account_client,
     }
+    # NOTE (e0ne): Use Cinder API v2 by default because v1 is deprecated
+    if CONF.volume_feature_enabled.api_v2:
+        extensions_client['cinder'] = os.volumes_v2_extension_client
+    else:
+        extensions_client['cinder'] = os.volumes_extension_client
+
     if service not in extensions_client:
         print('No tempest extensions client for %s' % service)
-        exit(1)
+        sys.exit(1)
     return extensions_client[service]
 
 
@@ -159,7 +192,7 @@ def get_enabled_extensions(service):
     }
     if service not in extensions_options:
         print('No supported extensions list option for %s' % service)
-        exit(1)
+        sys.exit(1)
     return extensions_options[service]
 
 
@@ -253,13 +286,9 @@ def check_service_availability(os, update):
         'object_storage': 'swift',
         'compute': 'nova',
         'orchestration': 'heat',
-        'metering': 'ceilometer',
-        'telemetry': 'ceilometer',
         'data_processing': 'sahara',
         'baremetal': 'ironic',
         'identity': 'keystone',
-        'messaging': 'zaqar',
-        'database': 'trove'
     }
     # Get catalog list for endpoints to use for validation
     _token, auth_data = os.auth_provider.get_auth()
@@ -304,8 +333,7 @@ def check_service_availability(os, update):
     return avail_services
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
+def _parser_add_args(parser):
     parser.add_argument('-u', '--update', action='store_true',
                         help='Update the config file with results from api '
                              'queries. This assumes whatever is set in the '
@@ -323,13 +351,21 @@ def parse_args():
     parser.add_argument('-r', '--replace-ext', action='store_true',
                         help="If specified the all option will be replaced "
                              "with a full list of extensions")
-    args = parser.parse_args()
-    return args
 
 
-def main():
+def parse_args():
+    parser = argparse.ArgumentParser()
+    _parser_add_args(parser)
+    opts = parser.parse_args()
+    return opts
+
+
+def main(opts=None):
     print('Running config verification...')
-    opts = parse_args()
+    if opts is None:
+        print("Use of: 'verify-tempest-config' is deprecated, "
+              "please use: 'tempest verify-config'")
+        opts = parse_args()
     update = opts.update
     replace = opts.replace_ext
     global CONF_PARSER
@@ -337,14 +373,21 @@ def main():
     outfile = sys.stdout
     if update:
         conf_file = _get_config_file()
-        if opts.output:
-            outfile = open(opts.output, 'w+')
         CONF_PARSER = moves.configparser.SafeConfigParser()
         CONF_PARSER.optionxform = str
         CONF_PARSER.readfp(conf_file)
-    icreds = credentials.get_isolated_credentials('verify_tempest_config')
+
+    # Indicate not to create network resources as part of getting credentials
+    net_resources = {
+        'network': False,
+        'router': False,
+        'subnet': False,
+        'dhcp': False
+    }
+    icreds = credentials.get_credentials_provider(
+        'verify_tempest_config', network_resources=net_resources)
     try:
-        os = clients.Manager(icreds.get_primary_creds())
+        os = clients.Manager(icreds.get_primary_creds().credentials)
         services = check_service_availability(os, update)
         results = {}
         for service in ['nova', 'cinder', 'neutron', 'swift']:
@@ -361,11 +404,28 @@ def main():
         display_results(results, update, replace)
         if update:
             conf_file.close()
-            CONF_PARSER.write(outfile)
-        outfile.close()
+            if opts.output:
+                with open(opts.output, 'w+') as outfile:
+                    CONF_PARSER.write(outfile)
     finally:
-        icreds.clear_isolated_creds()
+        icreds.clear_creds()
 
+
+class TempestVerifyConfig(command.Command):
+    """Verify your current tempest configuration"""
+
+    def get_parser(self, prog_name):
+        parser = super(TempestVerifyConfig, self).get_parser(prog_name)
+        _parser_add_args(parser)
+        return parser
+
+    def take_action(self, parsed_args):
+        try:
+            main(parsed_args)
+        except Exception:
+            LOG.exception("Failure verifying configuration.")
+            traceback.print_exc()
+            raise
 
 if __name__ == "__main__":
     main()

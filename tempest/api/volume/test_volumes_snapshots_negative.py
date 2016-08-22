@@ -10,13 +10,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import uuid
-
-from tempest_lib import exceptions as lib_exc
-
 from tempest.api.volume import base
 from tempest.common.utils import data_utils
 from tempest import config
+from tempest.lib import exceptions as lib_exc
 from tempest import test
 
 CONF = config.CONF
@@ -37,7 +34,8 @@ class VolumesV2SnapshotNegativeTestJSON(base.BaseVolumeTest):
         s_name = data_utils.rand_name('snap')
         self.assertRaises(lib_exc.NotFound,
                           self.snapshots_client.create_snapshot,
-                          str(uuid.uuid4()), display_name=s_name)
+                          volume_id=data_utils.rand_uuid(),
+                          display_name=s_name)
 
     @test.attr(type=['negative'])
     @test.idempotent_id('bb9da53e-d335-4309-9c15-7e76fd5e4d6d')
@@ -46,7 +44,21 @@ class VolumesV2SnapshotNegativeTestJSON(base.BaseVolumeTest):
         s_name = data_utils.rand_name('snap')
         self.assertRaises(lib_exc.NotFound,
                           self.snapshots_client.create_snapshot,
-                          None, display_name=s_name)
+                          volume_id=None, display_name=s_name)
+
+    @test.idempotent_id('677863d1-34f9-456d-b6ac-9924f667a7f4')
+    def test_volume_from_snapshot_decreasing_size(self):
+        # Creates a volume a snapshot passing a size different from the source
+        src_size = CONF.volume.volume_size + 1
+
+        src_vol = self.create_volume(size=src_size)
+        src_snap = self.create_snapshot(src_vol['id'])
+
+        # Destination volume smaller than source
+        self.assertRaises(lib_exc.BadRequest,
+                          self.volumes_client.create_volume,
+                          size=src_size - 1,
+                          snapshot_id=src_snap['id'])
 
 
 class VolumesV1SnapshotNegativeTestJSON(VolumesV2SnapshotNegativeTestJSON):

@@ -13,14 +13,13 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import base64
-
 import netaddr
 import testtools
 
 from tempest.api.compute import base
 from tempest.common.utils import data_utils
 from tempest.common.utils.linux import remote_client
+from tempest.common import waiters
 from tempest import config
 from tempest import test
 
@@ -39,7 +38,8 @@ class ServersTestJSON(base.BaseV2ComputeTest):
     def setup_clients(cls):
         super(ServersTestJSON, cls).setup_clients()
         cls.client = cls.servers_client
-        cls.network_client = cls.os.network_client
+        cls.networks_client = cls.os.networks_client
+        cls.subnets_client = cls.os.subnets_client
 
     @classmethod
     def resource_setup(cls):
@@ -49,21 +49,33 @@ class ServersTestJSON(base.BaseV2ComputeTest):
         cls.accessIPv4 = '1.1.1.1'
         cls.accessIPv6 = '0000:0000:0000:0000:0000:babe:220.12.22.2'
         cls.name = data_utils.rand_name('server')
-        file_contents = 'This is a test file.'
-        personality = [{'path': '/test.txt',
-                       'contents': base64.b64encode(file_contents)}]
+        cls.password = data_utils.rand_password()
         disk_config = cls.disk_config
         cls.server_initial = cls.create_test_server(
             validatable=True,
             wait_until='ACTIVE',
             name=cls.name,
-            meta=cls.meta,
+            metadata=cls.meta,
             accessIPv4=cls.accessIPv4,
             accessIPv6=cls.accessIPv6,
-            personality=personality,
-            disk_config=disk_config)
-        cls.password = cls.server_initial['adminPass']
-        cls.server = cls.client.show_server(cls.server_initial['id'])
+            disk_config=disk_config,
+            adminPass=cls.password)
+        cls.server = (cls.client.show_server(cls.server_initial['id'])
+                      ['server'])
+
+    def _create_net_subnet_ret_net_from_cidr(self, cidr):
+        name_net = data_utils.rand_name(self.__class__.__name__)
+        net = self.networks_client.create_network(name=name_net)
+        self.addCleanup(self.networks_client.delete_network,
+                        net['network']['id'])
+
+        subnet = self.subnets_client.create_subnet(
+            network_id=net['network']['id'],
+            cidr=cidr,
+            ip_version=4)
+        self.addCleanup(self.subnets_client.delete_subnet,
+                        subnet['subnet']['id'])
+        return net
 
     @test.attr(type='smoke')
     @test.idempotent_id('5de47127-9977-400a-936f-abcfbec1218f')
@@ -102,12 +114,14 @@ class ServersTestJSON(base.BaseV2ComputeTest):
     def test_verify_created_server_vcpus(self):
         # Verify that the number of vcpus reported by the instance matches
         # the amount stated by the flavor
-        flavor = self.flavors_client.show_flavor(self.flavor_ref)
+        flavor = self.flavors_client.show_flavor(self.flavor_ref)['flavor']
         linux_client = remote_client.RemoteClient(
             self.get_server_ip(self.server),
             self.ssh_user,
             self.password,
-            self.validation_resources['keypair']['private_key'])
+            self.validation_resources['keypair']['private_key'],
+            server=self.server,
+            servers_client=self.client)
         self.assertEqual(flavor['vcpus'], linux_client.get_number_of_vcpus())
 
     @test.idempotent_id('ac1ad47f-984b-4441-9274-c9079b7a0666')
@@ -119,8 +133,13 @@ class ServersTestJSON(base.BaseV2ComputeTest):
             self.get_server_ip(self.server),
             self.ssh_user,
             self.password,
-            self.validation_resources['keypair']['private_key'])
-        self.assertTrue(linux_client.hostname_equals_servername(self.name))
+            self.validation_resources['keypair']['private_key'],
+            server=self.server,
+            servers_client=self.client)
+        hostname = linux_client.get_hostname()
+        msg = ('Failed while verifying servername equals hostname. Expected '
+               'hostname "%s" but got "%s".' % (self.name, hostname))
+        self.assertEqual(self.name, hostname, msg)
 
     @test.idempotent_id('ed20d3fb-9d1f-4329-b160-543fbd5d9811')
     def test_create_server_with_scheduler_hint_group(self):
@@ -128,17 +147,18 @@ class ServersTestJSON(base.BaseV2ComputeTest):
         name = data_utils.rand_name('server_group')
         policies = ['affinity']
         body = self.server_groups_client.create_server_group(
-            name=name, policies=policies)
+            name=name, policies=policies)['server_group']
         group_id = body['id']
         self.addCleanup(self.server_groups_client.delete_server_group,
                         group_id)
 
         hints = {'group': group_id}
-        server = self.create_test_server(sched_hints=hints,
+        server = self.create_test_server(scheduler_hints=hints,
                                          wait_until='ACTIVE')
 
         # Check a server is in the group
-        server_group = self.server_groups_client.get_server_group(group_id)
+        server_group = (self.server_groups_client.show_server_group(group_id)
+                        ['server_group'])
         self.assertIn(server['id'], server_group['members'])
 
     @test.idempotent_id('0578d144-ed74-43f8-8e57-ab10dbf9b3c2')
@@ -147,29 +167,8 @@ class ServersTestJSON(base.BaseV2ComputeTest):
     def test_verify_multiple_nics_order(self):
         # Verify that the networks order given at the server creation is
         # preserved within the server.
-        name_net1 = data_utils.rand_name(self.__class__.__name__)
-        net1 = self.network_client.create_network(name=name_net1)
-        self.addCleanup(self.network_client.delete_network,
-                        net1['network']['id'])
-
-        name_net2 = data_utils.rand_name(self.__class__.__name__)
-        net2 = self.network_client.create_network(name=name_net2)
-        self.addCleanup(self.network_client.delete_network,
-                        net2['network']['id'])
-
-        subnet1 = self.network_client.create_subnet(
-            network_id=net1['network']['id'],
-            cidr='19.80.0.0/24',
-            ip_version=4)
-        self.addCleanup(self.network_client.delete_subnet,
-                        subnet1['subnet']['id'])
-
-        subnet2 = self.network_client.create_subnet(
-            network_id=net2['network']['id'],
-            cidr='19.86.0.0/24',
-            ip_version=4)
-        self.addCleanup(self.network_client.delete_subnet,
-                        subnet2['subnet']['id'])
+        net1 = self._create_net_subnet_ret_net_from_cidr('19.80.0.0/24')
+        net2 = self._create_net_subnet_ret_net_from_cidr('19.86.0.0/24')
 
         networks = [{'uuid': net1['network']['id']},
                     {'uuid': net2['network']['id']}]
@@ -185,21 +184,58 @@ class ServersTestJSON(base.BaseV2ComputeTest):
         # we're OK.
         def cleanup_server():
             self.client.delete_server(server_multi_nics['id'])
-            self.client.wait_for_server_termination(server_multi_nics['id'])
+            waiters.wait_for_server_termination(self.client,
+                                                server_multi_nics['id'])
 
         self.addCleanup(cleanup_server)
 
-        addresses = self.client.list_addresses(server_multi_nics['id'])
+        addresses = (self.client.list_addresses(server_multi_nics['id'])
+                     ['addresses'])
 
         # We can't predict the ip addresses assigned to the server on networks.
         # Sometimes the assigned addresses are ['19.80.0.2', '19.86.0.2'], at
         # other times ['19.80.0.3', '19.86.0.3']. So we check if the first
         # address is in first network, similarly second address is in second
         # network.
-        addr = [addresses[name_net1][0]['addr'],
-                addresses[name_net2][0]['addr']]
+        addr = [addresses[net1['network']['name']][0]['addr'],
+                addresses[net2['network']['name']][0]['addr']]
         networks = [netaddr.IPNetwork('19.80.0.0/24'),
                     netaddr.IPNetwork('19.86.0.0/24')]
+        for address, network in zip(addr, networks):
+            self.assertIn(address, network)
+
+    @test.idempotent_id('1678d144-ed74-43f8-8e57-ab10dbf9b3c2')
+    @testtools.skipUnless(CONF.service_available.neutron,
+                          'Neutron service must be available.')
+    def test_verify_duplicate_network_nics(self):
+        # Verify that server creation does not fail when more than one nic
+        # is created on the same network.
+        net1 = self._create_net_subnet_ret_net_from_cidr('19.80.0.0/24')
+        net2 = self._create_net_subnet_ret_net_from_cidr('19.86.0.0/24')
+
+        networks = [{'uuid': net1['network']['id']},
+                    {'uuid': net2['network']['id']},
+                    {'uuid': net1['network']['id']}]
+
+        server_multi_nics = self.create_test_server(
+            networks=networks, wait_until='ACTIVE')
+
+        def cleanup_server():
+            self.client.delete_server(server_multi_nics['id'])
+            waiters.wait_for_server_termination(self.client,
+                                                server_multi_nics['id'])
+
+        self.addCleanup(cleanup_server)
+
+        addresses = (self.client.list_addresses(server_multi_nics['id'])
+                     ['addresses'])
+
+        addr = [addresses[net1['network']['name']][0]['addr'],
+                addresses[net2['network']['name']][0]['addr'],
+                addresses[net1['network']['name']][1]['addr']]
+        networks = [netaddr.IPNetwork('19.80.0.0/24'),
+                    netaddr.IPNetwork('19.86.0.0/24'),
+                    netaddr.IPNetwork('19.80.0.0/24')]
         for address, network in zip(addr, networks):
             self.assertIn(address, network)
 
@@ -229,20 +265,23 @@ class ServersWithSpecificFlavorTestJSON(base.BaseV2ComputeAdminTest):
                           'Instance validation tests are disabled.')
     def test_verify_created_server_ephemeral_disk(self):
         # Verify that the ephemeral disk is created when creating server
+        flavor_base = self.flavors_client.show_flavor(
+            self.flavor_ref)['flavor']
 
         def create_flavor_with_extra_specs():
             flavor_with_eph_disk_name = data_utils.rand_name('eph_flavor')
             flavor_with_eph_disk_id = data_utils.rand_int_id(start=1000)
-            ram = 64
-            vcpus = 1
-            disk = 0
+
+            ram = flavor_base['ram']
+            vcpus = flavor_base['vcpus']
+            disk = flavor_base['disk']
 
             # Create a flavor with extra specs
             flavor = (self.flavor_client.
-                      create_flavor(flavor_with_eph_disk_name,
-                                    ram, vcpus, disk,
-                                    flavor_with_eph_disk_id,
-                                    ephemeral=1))
+                      create_flavor(name=flavor_with_eph_disk_name,
+                                    ram=ram, vcpus=vcpus, disk=disk,
+                                    id=flavor_with_eph_disk_id,
+                                    ephemeral=1))['flavor']
             self.addCleanup(flavor_clean_up, flavor['id'])
 
             return flavor['id']
@@ -251,15 +290,15 @@ class ServersWithSpecificFlavorTestJSON(base.BaseV2ComputeAdminTest):
             flavor_no_eph_disk_name = data_utils.rand_name('no_eph_flavor')
             flavor_no_eph_disk_id = data_utils.rand_int_id(start=1000)
 
-            ram = 64
-            vcpus = 1
-            disk = 0
+            ram = flavor_base['ram']
+            vcpus = flavor_base['vcpus']
+            disk = flavor_base['disk']
 
             # Create a flavor without extra specs
             flavor = (self.flavor_client.
-                      create_flavor(flavor_no_eph_disk_name,
-                                    ram, vcpus, disk,
-                                    flavor_no_eph_disk_id))
+                      create_flavor(name=flavor_no_eph_disk_name,
+                                    ram=ram, vcpus=vcpus, disk=disk,
+                                    id=flavor_no_eph_disk_id))['flavor']
             self.addCleanup(flavor_clean_up, flavor['id'])
 
             return flavor['id']
@@ -273,38 +312,42 @@ class ServersWithSpecificFlavorTestJSON(base.BaseV2ComputeAdminTest):
 
         admin_pass = self.image_ssh_password
 
-        server_no_eph_disk = (self.create_test_server(
-                              validatable=True,
-                              wait_until='ACTIVE',
-                              adminPass=admin_pass,
-                              flavor=flavor_no_eph_disk_id))
+        server_no_eph_disk = self.create_test_server(
+            validatable=True,
+            wait_until='ACTIVE',
+            adminPass=admin_pass,
+            flavor=flavor_no_eph_disk_id)
 
         # Get partition number of server without extra specs.
         server_no_eph_disk = self.client.show_server(
-            server_no_eph_disk['id'])
+            server_no_eph_disk['id'])['server']
         linux_client = remote_client.RemoteClient(
             self.get_server_ip(server_no_eph_disk),
             self.ssh_user,
             admin_pass,
-            self.validation_resources['keypair']['private_key'])
+            self.validation_resources['keypair']['private_key'],
+            server=server_no_eph_disk,
+            servers_client=self.client)
         partition_num = len(linux_client.get_partitions().split('\n'))
 
         # Explicit server deletion necessary for Juno compatibility
         self.client.delete_server(server_no_eph_disk['id'])
 
-        server_with_eph_disk = (self.create_test_server(
-                                validatable=True,
-                                wait_until='ACTIVE',
-                                adminPass=admin_pass,
-                                flavor=flavor_with_eph_disk_id))
+        server_with_eph_disk = self.create_test_server(
+            validatable=True,
+            wait_until='ACTIVE',
+            adminPass=admin_pass,
+            flavor=flavor_with_eph_disk_id)
 
         server_with_eph_disk = self.client.show_server(
-            server_with_eph_disk['id'])
+            server_with_eph_disk['id'])['server']
         linux_client = remote_client.RemoteClient(
             self.get_server_ip(server_with_eph_disk),
             self.ssh_user,
             admin_pass,
-            self.validation_resources['keypair']['private_key'])
+            self.validation_resources['keypair']['private_key'],
+            server=server_with_eph_disk,
+            servers_client=self.client)
         partition_num_emph = len(linux_client.get_partitions().split('\n'))
         self.assertEqual(partition_num + 1, partition_num_emph)
 

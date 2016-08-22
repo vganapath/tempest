@@ -19,9 +19,9 @@ import argparse
 import gzip
 import os
 import re
-import StringIO
+import six
+import six.moves.urllib.request as urlreq
 import sys
-import urllib2
 
 import yaml
 
@@ -54,7 +54,6 @@ allowed_dirty = set([
     'q-meta',
     'q-metering',
     'q-svc',
-    'q-vpn',
     's-proxy'])
 
 
@@ -68,10 +67,10 @@ def process_files(file_specs, url_specs, whitelists):
                 logs_with_errors.append(name)
     for (name, url) in url_specs:
         whitelist = whitelists.get(name, [])
-        req = urllib2.Request(url)
+        req = urlreq.Request(url)
         req.add_header('Accept-Encoding', 'gzip')
-        page = urllib2.urlopen(req)
-        buf = StringIO.StringIO(page.read())
+        page = urlreq.urlopen(req)
+        buf = six.StringIO(page.read())
         f = gzip.GzipFile(fileobj=buf)
         if scan_content(name, f.read().splitlines(), regexp, whitelist):
             logs_with_errors.append(name)
@@ -96,7 +95,7 @@ def scan_content(name, content, regexp, whitelist):
 
 
 def collect_url_logs(url):
-    page = urllib2.urlopen(url)
+    page = urlreq.urlopen(url)
     content = page.read()
     logs = re.findall('(screen-[\w-]+\.txt\.gz)</a>', content)
     return logs
@@ -105,7 +104,7 @@ def collect_url_logs(url):
 def main(opts):
     if opts.directory and opts.url or not (opts.directory or opts.url):
         print("Must provide exactly one of -d or -u")
-        exit(1)
+        return 1
     print("Checking logs...")
     WHITELIST_FILE = os.path.join(
         os.path.abspath(os.path.dirname(os.path.dirname(__file__))),

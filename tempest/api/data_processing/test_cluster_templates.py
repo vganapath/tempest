@@ -19,9 +19,9 @@ from tempest import test
 
 
 class ClusterTemplateTest(dp_base.BaseDataProcessingTest):
-    """Link to the API documentation is http://docs.openstack.org/developer/
-    sahara/restapi/rest_api_v1.0.html#cluster-templates
-    """
+    # Link to the API documentation is http://docs.openstack.org/developer/
+    # sahara/restapi/rest_api_v1.0.html#cluster-templates
+
     @classmethod
     def skip_checks(cls):
         super(ClusterTemplateTest, cls).skip_checks()
@@ -98,7 +98,7 @@ class ClusterTemplateTest(dp_base.BaseDataProcessingTest):
         template_info = self._create_cluster_template()
 
         # check for cluster template in list
-        templates = self.client.list_cluster_templates()
+        templates = self.client.list_cluster_templates()['cluster_templates']
         templates_info = [(template['id'], template['name'])
                           for template in templates]
         self.assertIn(template_info, templates_info)
@@ -110,6 +110,7 @@ class ClusterTemplateTest(dp_base.BaseDataProcessingTest):
 
         # check cluster template fetch by id
         template = self.client.get_cluster_template(template_id)
+        template = template['cluster_template']
         self.assertEqual(template_name, template['name'])
         self.assertDictContainsSubset(self.cluster_template, template)
 

@@ -12,17 +12,14 @@
 
 import os.path
 
-from oslo_log import log as logging
-from tempest_lib import exceptions as lib_exc
 import yaml
 
 from tempest.common.utils import data_utils
 from tempest import config
+from tempest.lib.common.utils import test_utils
 import tempest.test
 
 CONF = config.CONF
-
-LOG = logging.getLogger(__name__)
 
 
 class BaseOrchestrationTest(tempest.test.BaseTestCase):
@@ -49,9 +46,14 @@ class BaseOrchestrationTest(tempest.test.BaseTestCase):
         cls.client = cls.orchestration_client
         cls.servers_client = cls.os.servers_client
         cls.keypairs_client = cls.os.keypairs_client
-        cls.network_client = cls.os.network_client
+        cls.networks_client = cls.os.networks_client
         cls.volumes_client = cls.os.volumes_client
         cls.images_v2_client = cls.os.image_client_v2
+
+        if CONF.volume_feature_enabled.api_v2:
+            cls.volumes_client = cls.os.volumes_v2_client
+        else:
+            cls.volumes_client = cls.os.volumes_client
 
     @classmethod
     def resource_setup(cls):
@@ -81,22 +83,18 @@ class BaseOrchestrationTest(tempest.test.BaseTestCase):
     @classmethod
     def _clear_stacks(cls):
         for stack_identifier in cls.stacks:
-            try:
-                cls.client.delete_stack(stack_identifier)
-            except lib_exc.NotFound:
-                pass
+            test_utils.call_and_ignore_notfound_exc(
+                cls.client.delete_stack, stack_identifier)
 
         for stack_identifier in cls.stacks:
-            try:
-                cls.client.wait_for_stack_status(
-                    stack_identifier, 'DELETE_COMPLETE')
-            except lib_exc.NotFound:
-                pass
+            test_utils.call_and_ignore_notfound_exc(
+                cls.client.wait_for_stack_status, stack_identifier,
+                'DELETE_COMPLETE')
 
     @classmethod
     def _create_keypair(cls, name_start='keypair-heat-'):
         kp_name = data_utils.rand_name(name_start)
-        body = cls.keypairs_client.create_keypair(kp_name)
+        body = cls.keypairs_client.create_keypair(name=kp_name)['keypair']
         cls.keypairs.append(kp_name)
         return body
 
@@ -122,10 +120,8 @@ class BaseOrchestrationTest(tempest.test.BaseTestCase):
     @classmethod
     def _clear_images(cls):
         for image_id in cls.images:
-            try:
-                cls.images_v2_client.delete_image(image_id)
-            except lib_exc.NotFound:
-                pass
+            test_utils.call_and_ignore_notfound_exc(
+                cls.images_v2_client.delete_image, image_id)
 
     @classmethod
     def read_template(cls, name, ext='yaml'):
@@ -163,7 +159,7 @@ class BaseOrchestrationTest(tempest.test.BaseTestCase):
 
     def list_resources(self, stack_identifier):
         """Get a dict mapping of resource names to types."""
-        resources = self.client.list_resources(stack_identifier)
+        resources = self.client.list_resources(stack_identifier)['resources']
         self.assertIsInstance(resources, list)
         for res in resources:
             self.assert_fields_in_dict(res, 'logical_resource_id',
@@ -174,5 +170,5 @@ class BaseOrchestrationTest(tempest.test.BaseTestCase):
                     for r in resources)
 
     def get_stack_output(self, stack_identifier, output_key):
-        body = self.client.show_stack(stack_identifier)
+        body = self.client.show_stack(stack_identifier)['stack']
         return self.stack_output(body, output_key)

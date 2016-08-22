@@ -12,12 +12,9 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-from tempest_lib import decorators
-from tempest_lib import exceptions as lib_exc
-
 from tempest.api.object_storage import base
-from tempest.common.utils import data_utils
 from tempest import config
+from tempest.lib import exceptions as lib_exc
 from tempest import test
 
 CONF = config.CONF
@@ -37,8 +34,7 @@ class AccountQuotasNegativeTest(base.BaseObjectTest):
     @classmethod
     def resource_setup(cls):
         super(AccountQuotasNegativeTest, cls).resource_setup()
-        cls.container_name = data_utils.rand_name(name="TestContainer")
-        cls.container_client.create_container(cls.container_name)
+        cls.container_name = cls.create_container()
 
         # Retrieve a ResellerAdmin auth data and use it to set a quota
         # on the client's account
@@ -75,17 +71,14 @@ class AccountQuotasNegativeTest(base.BaseObjectTest):
 
     @classmethod
     def resource_cleanup(cls):
-        if hasattr(cls, "container_name"):
-            cls.delete_containers([cls.container_name])
+        cls.delete_containers()
         super(AccountQuotasNegativeTest, cls).resource_cleanup()
 
     @test.attr(type=["negative"])
     @test.idempotent_id('d1dc5076-555e-4e6d-9697-28f1fe976324')
     @test.requires_ext(extension='account_quotas', service='object')
     def test_user_modify_quota(self):
-        """Test that a user is not able to modify or remove a quota on
-        its account.
-        """
+        """Test that a user cannot modify or remove a quota on its account."""
 
         # Not able to remove quota
         self.assertRaises(lib_exc.Forbidden,
@@ -96,14 +89,3 @@ class AccountQuotasNegativeTest(base.BaseObjectTest):
         self.assertRaises(lib_exc.Forbidden,
                           self.account_client.create_account_metadata,
                           {"Quota-Bytes": "100"})
-
-    @test.attr(type=["negative"])
-    @decorators.skip_because(bug="1310597")
-    @test.idempotent_id('cf9e21f5-3aa4-41b1-9462-28ac550d8d3f')
-    @test.requires_ext(extension='account_quotas', service='object')
-    def test_upload_large_object(self):
-        object_name = data_utils.rand_name(name="TestObject")
-        data = data_utils.arbitrary_string(30)
-        self.assertRaises(lib_exc.OverLimit,
-                          self.object_client.create_object,
-                          self.container_name, object_name, data)

@@ -2,7 +2,7 @@ Reviewing Tempest Code
 ======================
 
 To start read the `OpenStack Common Review Checklist
-<https://wiki.openstack.org/wiki/ReviewChecklist#Common_Review_Checklist>`_
+<http://docs.openstack.org/infra/manual/developers.html#peer-review>`_
 
 
 Ensuring code is executed
@@ -34,7 +34,7 @@ should not be approved.
 
 
 Reject Copy and Paste Test Code
-------------------------
+-------------------------------
 When creating new tests that are similar to existing tests it is tempting to
 simply copy the code and make a few modifications. This increases code size and
 the maintenance burden. Such changes should not be approved if it is easy to
@@ -51,6 +51,19 @@ skipped or not. Do not approve changes that depend on an API call to determine
 whether to skip or not.
 
 
+Configuration Options
+---------------------
+With the introduction of the tempest external test plugin interface we needed
+to provide a stable contract for tempest's configuration options. This means
+we can no longer simply remove a configuration option when it's no longer used.
+Patches proposed that remove options without a deprecation cycle should not
+be approved. Similarly when changing default values with configuration we need
+to similarly be careful that we don't break existing functionality. Also, when
+adding options, just as before, we need to weigh the benefit of adding an
+additional option against the complexity and maintenance overhead having it
+costs.
+
+
 Test Documentation
 ------------------
 When a new test is being added refer to the :ref:`TestDocumentation` section in
@@ -59,6 +72,19 @@ level docstring linking to the API ref doc in the API tests and a docstring for
 scenario tests this is up to the reviewers discretion whether a docstring is
 required or not.
 
+Release Notes
+-------------
+Release notes are how we indicate to users and other consumers of Tempest what
+has changed in a given release. Since Tempest 10.0.0 we've been using `reno`_
+to manage and build the release notes. There are certain types of changes that
+require release notes and we should not approve them without including a release
+note. These include but aren't limited to, any addition, deprecation or removal
+from the lib interface, any change to configuration options (including
+deprecation), CLI additions or deprecations, major feature additions, and
+anything backwards incompatible or would require a user to take note or do
+something extra.
+
+.. _reno: http://docs.openstack.org/developer/reno/
 
 When to approve
 ---------------

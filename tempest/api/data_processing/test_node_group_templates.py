@@ -25,10 +25,6 @@ class NodeGroupTemplateTest(dp_base.BaseDataProcessingTest):
         if cls.default_plugin is None:
             raise cls.skipException("No Sahara plugins configured")
 
-    @classmethod
-    def resource_setup(cls):
-        super(NodeGroupTemplateTest, cls).resource_setup()
-
     def _create_node_group_template(self, template_name=None):
         """Creates Node Group Template with optional name specified.
 
@@ -65,6 +61,7 @@ class NodeGroupTemplateTest(dp_base.BaseDataProcessingTest):
 
         # check for node group template in list
         templates = self.client.list_node_group_templates()
+        templates = templates['node_group_templates']
         templates_info = [(template['id'], template['name'])
                           for template in templates]
         self.assertIn(template_info, templates_info)
@@ -76,6 +73,7 @@ class NodeGroupTemplateTest(dp_base.BaseDataProcessingTest):
 
         # check node group template fetch by id
         template = self.client.get_node_group_template(template_id)
+        template = template['node_group_template']
         self.assertEqual(template_name, template['name'])
         self.assertDictContainsSubset(self.node_group_template, template)
 
