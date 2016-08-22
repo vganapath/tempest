@@ -13,11 +13,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-from tempest_lib import exceptions as lib_exc
-
 from tempest.api.object_storage import base
 from tempest.common.utils import data_utils
 from tempest import config
+from tempest.lib import exceptions as lib_exc
 from tempest import test
 
 CONF = config.CONF
@@ -26,7 +25,7 @@ QUOTA_COUNT = 3
 
 
 class ContainerQuotasTest(base.BaseObjectTest):
-    """Attemps to test the perfect behavior of quotas in a container."""
+    """Attempts to test the perfect behavior of quotas in a container."""
 
     def setUp(self):
         """Creates and sets a container with quotas.
@@ -39,8 +38,7 @@ class ContainerQuotasTest(base.BaseObjectTest):
                      Maximum object count of the container.
         """
         super(ContainerQuotasTest, self).setUp()
-        self.container_name = data_utils.rand_name(name="TestContainer")
-        self.container_client.create_container(self.container_name)
+        self.container_name = self.create_container()
         metadata = {"quota-bytes": str(QUOTA_BYTES),
                     "quota-count": str(QUOTA_COUNT), }
         self.container_client.update_container_metadata(
@@ -48,7 +46,7 @@ class ContainerQuotasTest(base.BaseObjectTest):
 
     def tearDown(self):
         """Cleans the container of any object after each test."""
-        self.delete_containers([self.container_name])
+        self.delete_containers()
         super(ContainerQuotasTest, self).tearDown()
 
     @test.idempotent_id('9a0fb034-86af-4df0-86fa-f8bd7db21ae0')

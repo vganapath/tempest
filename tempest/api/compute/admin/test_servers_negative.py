@@ -12,9 +12,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import uuid
-
-from tempest_lib import exceptions as lib_exc
 import testtools
 
 from tempest.api.compute import base
@@ -22,16 +19,14 @@ from tempest.common import tempest_fixtures as fixtures
 from tempest.common.utils import data_utils
 from tempest.common import waiters
 from tempest import config
+from tempest.lib import exceptions as lib_exc
 from tempest import test
 
 CONF = config.CONF
 
 
 class ServersAdminNegativeTestJSON(base.BaseV2ComputeAdminTest):
-
-    """
-    Tests Servers API using admin privileges
-    """
+    """Tests Servers API using admin privileges"""
 
     @classmethod
     def setup_clients(cls):
@@ -69,16 +64,22 @@ class ServersAdminNegativeTestJSON(base.BaseV2ComputeAdminTest):
         self.useFixture(fixtures.LockFixture('compute_quotas'))
         flavor_name = data_utils.rand_name("flavor")
         flavor_id = self._get_unused_flavor_id()
-        quota_set = self.quotas_client.show_default_quota_set(self.tenant_id)
-        ram = int(quota_set['ram']) + 1
+        quota_set = (self.quotas_client.show_default_quota_set(self.tenant_id)
+                     ['quota_set'])
+        ram = int(quota_set['ram'])
+        if ram == -1:
+            raise self.skipException("default ram quota set is -1,"
+                                     " cannot test overlimit")
+        ram += 1
         vcpus = 8
         disk = 10
-        flavor_ref = self.flavors_client.create_flavor(flavor_name,
-                                                       ram, vcpus, disk,
-                                                       flavor_id)
+        flavor_ref = self.flavors_client.create_flavor(name=flavor_name,
+                                                       ram=ram, vcpus=vcpus,
+                                                       disk=disk,
+                                                       id=flavor_id)['flavor']
         self.addCleanup(self.flavors_client.delete_flavor, flavor_id)
         self.assertRaises((lib_exc.Forbidden, lib_exc.OverLimit),
-                          self.client.resize,
+                          self.client.resize_server,
                           self.servers[0]['id'],
                           flavor_ref['id'])
 
@@ -92,15 +93,21 @@ class ServersAdminNegativeTestJSON(base.BaseV2ComputeAdminTest):
         flavor_name = data_utils.rand_name("flavor")
         flavor_id = self._get_unused_flavor_id()
         ram = 512
-        quota_set = self.quotas_client.show_default_quota_set(self.tenant_id)
-        vcpus = int(quota_set['cores']) + 1
+        quota_set = (self.quotas_client.show_default_quota_set(self.tenant_id)
+                     ['quota_set'])
+        vcpus = int(quota_set['cores'])
+        if vcpus == -1:
+            raise self.skipException("default cores quota set is -1,"
+                                     " cannot test overlimit")
+        vcpus += 1
         disk = 10
-        flavor_ref = self.flavors_client.create_flavor(flavor_name,
-                                                       ram, vcpus, disk,
-                                                       flavor_id)
+        flavor_ref = self.flavors_client.create_flavor(name=flavor_name,
+                                                       ram=ram, vcpus=vcpus,
+                                                       disk=disk,
+                                                       id=flavor_id)['flavor']
         self.addCleanup(self.flavors_client.delete_flavor, flavor_id)
         self.assertRaises((lib_exc.Forbidden, lib_exc.OverLimit),
-                          self.client.resize,
+                          self.client.resize_server,
                           self.servers[0]['id'],
                           flavor_ref['id'])
 
@@ -122,14 +129,14 @@ class ServersAdminNegativeTestJSON(base.BaseV2ComputeAdminTest):
     @test.idempotent_id('e741298b-8df2-46f0-81cb-8f814ff2504c')
     def test_reset_state_server_nonexistent_server(self):
         self.assertRaises(lib_exc.NotFound,
-                          self.client.reset_state, '999')
+                          self.client.reset_state, '999', state='error')
 
     @test.attr(type=['negative'])
     @test.idempotent_id('e84e2234-60d2-42fa-8b30-e2d3049724ac')
     def test_get_server_diagnostics_by_non_admin(self):
         # Non-admin user can not view server diagnostics according to policy
         self.assertRaises(lib_exc.Forbidden,
-                          self.non_adm_client.get_server_diagnostics,
+                          self.non_adm_client.show_server_diagnostics,
                           self.s1_id)
 
     @test.attr(type=['negative'])
@@ -138,7 +145,7 @@ class ServersAdminNegativeTestJSON(base.BaseV2ComputeAdminTest):
         # migrate a non existent server
         self.assertRaises(lib_exc.NotFound,
                           self.client.migrate_server,
-                          str(uuid.uuid4()))
+                          data_utils.rand_uuid())
 
     @test.idempotent_id('b0b17f83-d14e-4fc4-8f31-bcc9f3cfa629')
     @testtools.skipUnless(CONF.compute_feature_enabled.resize,
@@ -154,7 +161,7 @@ class ServersAdminNegativeTestJSON(base.BaseV2ComputeAdminTest):
         self.client.suspend_server(server_id)
         waiters.wait_for_server_status(self.client,
                                        server_id, 'SUSPENDED')
-        # migrate an suspended server should fail
+        # migrate a suspended server should fail
         self.assertRaises(lib_exc.Conflict,
                           self.client.migrate_server,
                           server_id)

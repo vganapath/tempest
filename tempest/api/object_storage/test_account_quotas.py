@@ -34,8 +34,7 @@ class AccountQuotasTest(base.BaseObjectTest):
     @classmethod
     def resource_setup(cls):
         super(AccountQuotasTest, cls).resource_setup()
-        cls.container_name = data_utils.rand_name(name="TestContainer")
-        cls.container_client.create_container(cls.container_name)
+        cls.container_name = cls.create_container()
 
         # Retrieve a ResellerAdmin auth data and use it to set a quota
         # on the client's account
@@ -73,8 +72,7 @@ class AccountQuotasTest(base.BaseObjectTest):
 
     @classmethod
     def resource_cleanup(cls):
-        if hasattr(cls, "container_name"):
-            cls.delete_containers([cls.container_name])
+        cls.delete_containers()
         super(AccountQuotasTest, cls).resource_cleanup()
 
     @test.attr(type="smoke")
@@ -92,8 +90,7 @@ class AccountQuotasTest(base.BaseObjectTest):
     @test.idempotent_id('63f51f9f-5f1d-4fc6-b5be-d454d70949d6')
     @test.requires_ext(extension='account_quotas', service='object')
     def test_admin_modify_quota(self):
-        """Test that the ResellerAdmin is able to modify and remove the quota
-        on a user's account.
+        """Test ResellerAdmin can modify/remove the quota on a user's account
 
         Using the account client, the test modifies the quota
         successively to:

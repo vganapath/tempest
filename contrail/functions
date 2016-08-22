@@ -1,18 +1,6 @@
 
 with_venv=tools/with_venv.sh
 
-declare -A sku_dict
-sku_dict['2014.1']='icehouse'
-sku_dict['2014.2']='juno'
-sku_dict['2015.1.2']='kilo'
-sku_dict['12.0']='liberty'
-sku_dict['13.0']='mitaka'
-
-function get_sku() {
-    ver=`${with_venv} nova-manage version`
-    #echo ${sku_dict[${ver}]}
-    echo ${sku_dict[${ver}]}
-}
 
 # Determinate is the given option present in the INI file
 # ini_has_option config-file section option
@@ -57,7 +45,6 @@ function get_image_id() {
     local keystone_host=$1
     local image_name=$2
     local image_path=$3
-    local sku=$4
     images=`${with_venv} nova image-list`
     #if grep -q $image_name $images; then
     if [[ "$images" == *\ ${image_name}\ * ]];then
@@ -67,11 +54,8 @@ function get_image_id() {
         if [ ! -f $image_filename ]; then
             `wget $image_path --no-check-certificate`
         fi
-        if [[ "$sku" < "l" ]]; then
-            export OS_IMAGE_URL=http://${keystone_host}:9292/ && ${with_venv} glance image-create --name $image_name --disk-format qcow2 --container-format bare --is-public True --file $image_filename > /dev/null
-        else
-            export OS_IMAGE_URL=http://${keystone_host}:9292/ && ${with_venv} glance image-create --name $image_name --disk-format qcow2 --container-format bare  --file $image_filename --visibility public > /dev/null
-        fi
+        #TODO, this only works for liberty and mitaka, need to run it for all scenarios
+        export OS_IMAGE_URL=http://${keystone_host}:9292/ && ${with_venv} glance image-create --name $image_name --disk-format qcow2 --container-format bare  --file $image_filename --visibility public > /dev/null
         image_id=`${with_venv} nova image-list | grep " $image_name "  | awk {'print $2'}`
     fi
     echo $image_id
@@ -126,7 +110,7 @@ function create_flavor() {
     if ${with_venv} nova flavor-show $id >/dev/null 2>&1 ; then
         echo "flavor $id already present, not creating"
     else
-        nova flavor-create $name $id $ram $disk $vCPU
+        ${with_venv} nova flavor-create $name $id $ram $disk $vCPU
     fi
 }
 

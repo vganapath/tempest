@@ -62,7 +62,7 @@ class ImagesOneServerTestJSON(base.BaseV2ComputeTest):
     @classmethod
     def setup_clients(cls):
         super(ImagesOneServerTestJSON, cls).setup_clients()
-        cls.client = cls.images_client
+        cls.client = cls.compute_images_client
 
     @classmethod
     def resource_setup(cls):
@@ -71,7 +71,7 @@ class ImagesOneServerTestJSON(base.BaseV2ComputeTest):
         cls.server_id = server['id']
 
     def _get_default_flavor_disk_size(self, flavor_id):
-        flavor = self.flavors_client.show_flavor(flavor_id)
+        flavor = self.flavors_client.show_flavor(flavor_id)['flavor']
         return flavor['disk']
 
     @test.idempotent_id('3731d080-d4c5-4872-b41a-64d0d0021314')
@@ -80,16 +80,17 @@ class ImagesOneServerTestJSON(base.BaseV2ComputeTest):
         # Create a new image
         name = data_utils.rand_name('image')
         meta = {'image_type': 'test'}
-        body = self.client.create_image(self.server_id, name, meta)
+        body = self.client.create_image(self.server_id, name=name,
+                                        metadata=meta)
         image_id = data_utils.parse_image_id(body.response['location'])
         waiters.wait_for_image_status(self.client, image_id, 'ACTIVE')
 
         # Verify the image was created correctly
-        image = self.client.show_image(image_id)
+        image = self.client.show_image(image_id)['image']
         self.assertEqual(name, image['name'])
         self.assertEqual('test', image['metadata']['image_type'])
 
-        original_image = self.client.show_image(self.image_ref)
+        original_image = self.client.show_image(self.image_ref)['image']
 
         # Verify minRAM is the same as the original image
         self.assertEqual(image['minRam'], original_image['minRam'])
@@ -112,6 +113,6 @@ class ImagesOneServerTestJSON(base.BaseV2ComputeTest):
         # #1370954 in glance which will 500 if mysql is used as the
         # backend and it attempts to store a 4 byte utf-8 character
         utf8_name = data_utils.rand_name('\xe2\x82\xa1')
-        body = self.client.create_image(self.server_id, utf8_name)
+        body = self.client.create_image(self.server_id, name=utf8_name)
         image_id = data_utils.parse_image_id(body.response['location'])
         self.addCleanup(self.client.delete_image, image_id)

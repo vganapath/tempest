@@ -30,7 +30,7 @@ class VolumeAttachDeleteTest(stressaction.StressAction):
         name = data_utils.rand_name("volume")
         self.logger.info("creating volume: %s" % name)
         volume = self.manager.volumes_client.create_volume(
-            display_name=name)
+            display_name=name)['volume']
         self.manager.volumes_client.wait_for_volume_status(volume['id'],
                                                            'available')
         self.logger.info("created volume: %s" % volume['id'])
@@ -39,7 +39,7 @@ class VolumeAttachDeleteTest(stressaction.StressAction):
         vm_name = data_utils.rand_name("instance")
         self.logger.info("creating vm: %s" % vm_name)
         server = self.manager.servers_client.create_server(
-            vm_name, self.image, self.flavor)
+            name=vm_name, imageRef=self.image, flavorRef=self.flavor)['server']
         server_id = server['id']
         waiters.wait_for_server_status(self.manager.servers_client, server_id,
                                        'ACTIVE')
@@ -49,8 +49,8 @@ class VolumeAttachDeleteTest(stressaction.StressAction):
         self.logger.info("attach volume (%s) to vm %s" %
                          (volume['id'], server_id))
         self.manager.servers_client.attach_volume(server_id,
-                                                  volume['id'],
-                                                  '/dev/vdc')
+                                                  volumeId=volume['id'],
+                                                  device='/dev/vdc')
         self.manager.volumes_client.wait_for_volume_status(volume['id'],
                                                            'in-use')
         self.logger.info("volume (%s) attached to vm %s" %
@@ -59,7 +59,8 @@ class VolumeAttachDeleteTest(stressaction.StressAction):
         # Step 4: delete vm
         self.logger.info("deleting vm: %s" % vm_name)
         self.manager.servers_client.delete_server(server_id)
-        self.manager.servers_client.wait_for_server_termination(server_id)
+        waiters.wait_for_server_termination(self.manager.servers_client,
+                                            server_id)
         self.logger.info("deleted vm: %s" % server_id)
 
         # Step 5: delete volume

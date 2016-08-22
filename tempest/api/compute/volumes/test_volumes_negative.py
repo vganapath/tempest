@@ -13,13 +13,10 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import uuid
-
-from tempest_lib import exceptions as lib_exc
-
 from tempest.api.compute import base
 from tempest.common.utils import data_utils
 from tempest import config
+from tempest.lib import exceptions as lib_exc
 from tempest import test
 
 CONF = config.CONF
@@ -46,7 +43,7 @@ class VolumesNegativeTest(base.BaseV2ComputeTest):
         # Creating a nonexistent volume id
         # Trying to GET a non existent volume
         self.assertRaises(lib_exc.NotFound, self.client.show_volume,
-                          str(uuid.uuid4()))
+                          data_utils.rand_uuid())
 
     @test.attr(type=['negative'])
     @test.idempotent_id('54a34226-d910-4b00-9ef8-8683e6c55846')
@@ -55,7 +52,7 @@ class VolumesNegativeTest(base.BaseV2ComputeTest):
         # Creating nonexistent volume id
         # Trying to DELETE a non existent volume
         self.assertRaises(lib_exc.NotFound, self.client.delete_volume,
-                          str(uuid.uuid4()))
+                          data_utils.rand_uuid())
 
     @test.attr(type=['negative'])
     @test.idempotent_id('5125ae14-152b-40a7-b3c5-eae15e9022ef')

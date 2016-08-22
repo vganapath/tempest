@@ -75,7 +75,7 @@ iniset $TEMPEST_CONFIG identity alt_tenant_name $ALT_TENANT_NAME
 iniset $TEMPEST_CONFIG auth admin_username $ADMIN_USERNAME
 iniset $TEMPEST_CONFIG auth admin_password $ADMIN_PASSWORD
 iniset $TEMPEST_CONFIG auth admin_project_name $ADMIN_TENANT_NAME
-iniset $TEMPEST_CONFIG auth use_dynamic_credentials True
+##iniset $TEMPEST_CONFIG auth use_dynamic_credentials True
 
 iniset $TEMPEST_CONFIG image http_image $HTTP_IMAGE_PATH
 
@@ -91,7 +91,7 @@ iniset $TEMPEST_CONFIG compute flavor_ref $FLAVOR_ID
 iniset $TEMPEST_CONFIG compute image_ref_alt $image_uuid_alt
 iniset $TEMPEST_CONFIG compute image_alt_ssh_user ${DEFAULT_INSTANCE_USER:-cirros}
 iniset $TEMPEST_CONFIG compute image_alt_ssh_password ${DEFAULT_INSTANCE_PASSWORD:-cubswin:)}
-iniset $TEMPEST_CONFIG compute allow_tenant_isolation ${TENANT_ISOLATION:-true}
+iniset $TEMPEST_CONFIG compute allow_tenant_isolation ${TENANT_ISOLATION:-false}
 iniset $TEMPEST_CONFIG network public_network_id "$public_network_id"
 
 # Disable IPv6 tests

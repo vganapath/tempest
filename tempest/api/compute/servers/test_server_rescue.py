@@ -41,27 +41,25 @@ class ServerRescueTestJSON(base.BaseV2ComputeTest):
         super(ServerRescueTestJSON, cls).resource_setup()
 
         # Floating IP creation
-        body = cls.floating_ips_client.create_floating_ip()
+        body = cls.floating_ips_client.create_floating_ip(
+            pool=CONF.network.floating_network_name)['floating_ip']
         cls.floating_ip_id = str(body['id']).strip()
         cls.floating_ip = str(body['ip']).strip()
 
         # Security group creation
         cls.sg_name = data_utils.rand_name('sg')
         cls.sg_desc = data_utils.rand_name('sg-desc')
-        cls.sg = \
-            cls.security_groups_client.create_security_group(cls.sg_name,
-                                                             cls.sg_desc)
+        cls.sg = cls.security_groups_client.create_security_group(
+            name=cls.sg_name, description=cls.sg_desc)['security_group']
         cls.sg_id = cls.sg['id']
 
+        cls.password = data_utils.rand_password()
         # Server for positive tests
-        server = cls.create_test_server(wait_until='BUILD')
+        server = cls.create_test_server(adminPass=cls.password,
+                                        wait_until='BUILD')
         cls.server_id = server['id']
-        cls.password = server['adminPass']
         waiters.wait_for_server_status(cls.servers_client, cls.server_id,
                                        'ACTIVE')
-
-    def setUp(self):
-        super(ServerRescueTestJSON, self).setUp()
 
     @classmethod
     def resource_cleanup(cls):
@@ -70,9 +68,6 @@ class ServerRescueTestJSON(base.BaseV2ComputeTest):
         cls.sg = cls.security_groups_client.delete_security_group(
             cls.sg_id)
         super(ServerRescueTestJSON, cls).resource_cleanup()
-
-    def tearDown(self):
-        super(ServerRescueTestJSON, self).tearDown()
 
     def _unrescue(self, server_id):
         self.servers_client.unrescue_server(server_id)
@@ -117,8 +112,9 @@ class ServerRescueTestJSON(base.BaseV2ComputeTest):
         self.addCleanup(self._unrescue, self.server_id)
 
         # Add Security group
-        self.servers_client.add_security_group(self.server_id, self.sg_name)
+        self.servers_client.add_security_group(self.server_id,
+                                               name=self.sg_name)
 
         # Delete Security group
         self.servers_client.remove_security_group(self.server_id,
-                                                  self.sg_name)
+                                                  name=self.sg_name)

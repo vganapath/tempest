@@ -15,12 +15,19 @@
 
 from __future__ import print_function
 
+import functools
 import logging as std_logging
 import os
+import tempfile
 
+from oslo_concurrency import lockutils
 from oslo_config import cfg
-
 from oslo_log import log as logging
+import testtools
+
+from tempest.lib import exceptions
+from tempest.lib.services import clients
+from tempest.test_discover import plugins
 
 
 # TODO(marun) Replace use of oslo_config's global ConfigOpts
@@ -51,34 +58,60 @@ AuthGroup = [
                     "at least `2 * CONC` distinct accounts configured in "
                     " the `test_accounts_file`, with CONC == the "
                     "number of concurrent test processes."),
-    cfg.BoolOpt('allow_tenant_isolation',
+    cfg.BoolOpt('use_dynamic_credentials',
                 default=True,
-                help="Allows test cases to create/destroy tenants and "
+                help="Allows test cases to create/destroy projects and "
                      "users. This option requires that OpenStack Identity "
                      "API admin credentials are known. If false, isolated "
                      "test cases and parallel execution, can still be "
                      "achieved configuring a list of test accounts",
                 deprecated_opts=[cfg.DeprecatedOpt('allow_tenant_isolation',
+                                                   group='auth'),
+                                 cfg.DeprecatedOpt('allow_tenant_isolation',
                                                    group='compute'),
                                  cfg.DeprecatedOpt('allow_tenant_isolation',
                                                    group='orchestration')]),
     cfg.ListOpt('tempest_roles',
                 help="Roles to assign to all users created by tempest",
                 default=[]),
-    cfg.StrOpt('tenant_isolation_domain_name',
-               default=None,
-               help="Only applicable when identity.auth_version is v3."
-                    "Domain within which isolated credentials are provisioned."
-                    "The default \"None\" means that the domain from the"
-                    "admin user is used instead."),
+    cfg.StrOpt('default_credentials_domain_name',
+               default='Default',
+               help="Default domain used when getting v3 credentials. "
+                    "This is the name keystone uses for v2 compatibility.",
+               deprecated_opts=[cfg.DeprecatedOpt(
+                                'tenant_isolation_domain_name',
+                                group='auth')]),
     cfg.BoolOpt('create_isolated_networks',
                 default=True,
-                help="If allow_tenant_isolation is set to True and Neutron is "
-                     "enabled Tempest will try to create a useable network, "
-                     "subnet, and router when needed for each tenant it  "
+                help="If use_dynamic_credentials is set to True and Neutron "
+                     "is enabled Tempest will try to create a usable network, "
+                     "subnet, and router when needed for each project it "
                      "creates. However in some neutron configurations, like "
                      "with VLAN provider networks, this doesn't work. So if "
                      "set to False the isolated networks will not be created"),
+    cfg.StrOpt('admin_username',
+               help="Username for an administrative user. This is needed for "
+                    "authenticating requests made by project isolation to "
+                    "create users and projects",
+               deprecated_group='identity'),
+    cfg.StrOpt('admin_project_name',
+               help="Project name to use for an administrative user. This is "
+                    "needed for authenticating requests made by project "
+                    "isolation to create users and projects",
+               deprecated_opts=[cfg.DeprecatedOpt('admin_tenant_name',
+                                                  group='auth'),
+                                cfg.DeprecatedOpt('admin_tenant_name',
+                                                  group='identity')]),
+    cfg.StrOpt('admin_password',
+               help="Password to use for an administrative user. This is "
+                    "needed for authenticating requests made by project "
+                    "isolation to create users and projects",
+               secret=True,
+               deprecated_group='identity'),
+    cfg.StrOpt('admin_domain_name',
+               help="Admin domain name for authentication (Keystone V3)."
+                    "The same domain applies to user and project",
+               deprecated_group='identity'),
 ]
 
 identity_group = cfg.OptGroup(name='identity',
@@ -88,13 +121,6 @@ IdentityGroup = [
     cfg.StrOpt('catalog_type',
                default='identity',
                help="Catalog type of the Identity service."),
-    cfg.BoolOpt('disable_ssl_certificate_validation',
-                default=False,
-                help="Set to True if using self-signed SSL certificates."),
-    cfg.StrOpt('ca_certificates_file',
-               default=None,
-               help='Specify a CA bundle file to use in verifying a '
-                    'TLS (https) server certificate.'),
     cfg.StrOpt('uri',
                help="Full URI of the OpenStack Identity API (Keystone), v2"),
     cfg.StrOpt('uri_v3',
@@ -109,51 +135,56 @@ IdentityGroup = [
                     "services' region name unless they are set explicitly. "
                     "If no such region is found in the service catalog, the "
                     "first found one is used."),
-    cfg.StrOpt('endpoint_type',
+    cfg.StrOpt('v2_admin_endpoint_type',
+               default='adminURL',
+               choices=['public', 'admin', 'internal',
+                        'publicURL', 'adminURL', 'internalURL'],
+               help="The admin endpoint type to use for OpenStack Identity "
+                    "(Keystone) API v2"),
+    cfg.StrOpt('v2_public_endpoint_type',
                default='publicURL',
                choices=['public', 'admin', 'internal',
                         'publicURL', 'adminURL', 'internalURL'],
-               help="The endpoint type to use for the identity service."),
-    cfg.StrOpt('username',
-               help="Username to use for Nova API requests."),
-    cfg.StrOpt('tenant_name',
-               help="Tenant name to use for Nova API requests."),
+               help="The public endpoint type to use for OpenStack Identity "
+                    "(Keystone) API v2",
+               deprecated_opts=[cfg.DeprecatedOpt('endpoint_type',
+                                                  group='identity')]),
+    cfg.StrOpt('v3_endpoint_type',
+               default='adminURL',
+               choices=['public', 'admin', 'internal',
+                        'publicURL', 'adminURL', 'internalURL'],
+               help="The endpoint type to use for OpenStack Identity "
+                    "(Keystone) API v3"),
     cfg.StrOpt('admin_role',
                default='admin',
                help="Role required to administrate keystone."),
-    cfg.StrOpt('password',
-               help="API key to use when authenticating.",
-               secret=True),
-    cfg.StrOpt('domain_name',
-               help="Domain name for authentication (Keystone V3)."
-                    "The same domain applies to user and project"),
-    cfg.StrOpt('alt_username',
-               help="Username of alternate user to use for Nova API "
-                    "requests."),
-    cfg.StrOpt('alt_tenant_name',
-               help="Alternate user's Tenant name to use for Nova API "
-                    "requests."),
-    cfg.StrOpt('alt_password',
-               help="API key to use when authenticating as alternate user.",
-               secret=True),
-    cfg.StrOpt('alt_domain_name',
-               help="Alternate domain name for authentication (Keystone V3)."
-                    "The same domain applies to user and project"),
-    cfg.StrOpt('admin_username',
-               help="Administrative Username to use for "
-                    "Keystone API requests."),
-    cfg.StrOpt('admin_tenant_name',
-               help="Administrative Tenant name to use for Keystone API "
-                    "requests."),
-    cfg.StrOpt('admin_password',
-               help="API key to use when authenticating as admin.",
-               secret=True),
-    cfg.StrOpt('admin_domain_name',
-               help="Admin domain name for authentication (Keystone V3)."
-                    "The same domain applies to user and project"),
     cfg.StrOpt('default_domain_id',
                default='default',
                help="ID of the default domain"),
+    cfg.BoolOpt('admin_domain_scope',
+                default=False,
+                help="Whether keystone identity v3 policy required "
+                     "a domain scoped token to use admin APIs")
+]
+
+service_clients_group = cfg.OptGroup(name='service-clients',
+                                     title="Service Clients Options")
+
+ServiceClientsGroup = [
+    cfg.IntOpt('http_timeout',
+               default=60,
+               help='Timeout in seconds to wait for the http request to '
+                    'return'),
+    cfg.BoolOpt('disable_ssl_certificate_validation',
+                default=False,
+                help="Set to True if using self-signed SSL certificates.",
+                deprecated_group='identity'),
+    cfg.StrOpt('ca_certificates_file',
+               default=None,
+               help='Specify a CA bundle file to use in verifying a '
+                    'TLS (https) server certificate.',
+               deprecated_group='identity'),
+
 ]
 
 identity_feature_group = cfg.OptGroup(name='identity-feature-enabled',
@@ -170,6 +201,17 @@ IdentityFeatureGroup = [
     cfg.BoolOpt('api_v3',
                 default=True,
                 help='Is the v3 identity API enabled'),
+    cfg.ListOpt('api_extensions',
+                default=['all'],
+                help="A list of enabled identity extensions with a special "
+                     "entry all which indicates every extension is enabled. "
+                     "Empty list indicates all extensions are disabled. "
+                     "To get the list of extensions run: 'keystone discover'"),
+    # TODO(rodrigods): Remove the reseller flag when Kilo and Liberty is end
+    # of life.
+    cfg.BoolOpt('reseller',
+                default=False,
+                help='Does the environment support reseller?')
 ]
 
 compute_group = cfg.OptGroup(name='compute',
@@ -189,16 +231,6 @@ ComputeGroup = [
     cfg.StrOpt('flavor_ref_alt',
                default="2",
                help='Valid secondary flavor to be used in tests.'),
-    cfg.StrOpt('image_ssh_user',
-               default="root",
-               help="User name used to authenticate to an instance."),
-    cfg.StrOpt('image_ssh_password',
-               default="password",
-               help="Password used to authenticate to an instance."),
-    cfg.StrOpt('image_alt_ssh_user',
-               default="root",
-               help="User name used to authenticate to an instance using "
-                    "the alternate image."),
     cfg.IntOpt('build_interval',
                default=1,
                help="Time in seconds between build status checks."),
@@ -207,57 +239,17 @@ ComputeGroup = [
                help="Timeout in seconds to wait for an instance to build. "
                     "Other services that do not define build_timeout will "
                     "inherit this value."),
-    cfg.StrOpt('ssh_shell_prologue',
-               default="set -eu -o pipefail; PATH=$$PATH:/sbin;",
-               help="Shell fragments to use before executing a command "
-                    "when sshing to a guest."),
-    cfg.StrOpt('ssh_auth_method',
-               default='keypair',
-               help="Auth method used for authenticate to the instance. "
-                    "Valid choices are: keypair, configured, adminpass "
-                    "and disabled. "
-                    "Keypair: start the servers with a ssh keypair. "
-                    "Configured: use the configured user and password. "
-                    "Adminpass: use the injected adminPass. "
-                    "Disabled: avoid using ssh when it is an option."),
-    cfg.StrOpt('ssh_connect_method',
-               default='floating',
-               help="How to connect to the instance? "
-                    "fixed: using the first ip belongs the fixed network "
-                    "floating: creating and using a floating ip."),
-    cfg.StrOpt('ssh_user',
-               default='root',
-               help="User name used to authenticate to an instance."),
-    cfg.IntOpt('ping_timeout',
-               default=120,
-               help="Timeout in seconds to wait for ping to "
-                    "succeed."),
-    cfg.IntOpt('ping_size',
-               default=56,
-               help="The packet size for ping packets originating "
-                    "from remote linux hosts"),
-    cfg.IntOpt('ping_count',
-               default=1,
-               help="The number of ping packets originating from remote "
-                    "linux hosts"),
     cfg.IntOpt('ready_wait',
                default=0,
                help="Additional wait time for clean state, when there is "
                     "no OS-EXT-STS extension available"),
     cfg.StrOpt('fixed_network_name',
                help="Name of the fixed network that is visible to all test "
-                    "tenants. If multiple networks are available for a tenant"
-                    " this is the network which will be used for creating "
-                    "servers if tempest does not create a network or a "
-                    "network is not specified elsewhere. It may be used for "
+                    "projects. If multiple networks are available for a "
+                    "project, this is the network which will be used for "
+                    "creating servers if tempest does not create a network or "
+                    "s network is not specified elsewhere. It may be used for "
                     "ssh validation only if floating IPs are disabled."),
-    cfg.StrOpt('network_for_ssh',
-               default='public',
-               help="Network used for SSH connections. Ignored if "
-                    "use_floatingip_for_ssh=true or run_validation=false."),
-    cfg.BoolOpt('use_floatingip_for_ssh',
-                default=True,
-                help="Does SSH use Floating IPs?"),
     cfg.StrOpt('catalog_type',
                default='compute',
                help="Catalog type of the Compute service."),
@@ -283,12 +275,32 @@ ComputeGroup = [
                     'when shelved. This time should be the same as the time '
                     'of nova.conf, and some tests will run for as long as the '
                     'time.'),
-    cfg.StrOpt('floating_ip_range',
-               default='10.0.0.0/29',
-               help='Unallocated floating IP range, which will be used to '
-                    'test the floating IP bulk feature for CRUD operation. '
-                    'This block must not overlap an existing floating IP '
-                    'pool.')
+    cfg.IntOpt('min_compute_nodes',
+               default=1,
+               help=('The minimum number of compute nodes expected. This will '
+                     'be utilized by some multinode specific tests to ensure '
+                     'that requests match the expected size of the cluster '
+                     'you are testing with.')),
+    cfg.StrOpt('min_microversion',
+               default=None,
+               help="Lower version of the test target microversion range. "
+                    "The format is 'X.Y', where 'X' and 'Y' are int values. "
+                    "Tempest selects tests based on the range between "
+                    "min_microversion and max_microversion. "
+                    "If both values are not specified, Tempest avoids tests "
+                    "which require a microversion. Valid values are string "
+                    "with format 'X.Y' or string 'latest'",
+                    deprecated_group='compute-feature-enabled'),
+    cfg.StrOpt('max_microversion',
+               default=None,
+               help="Upper version of the test target microversion range. "
+                    "The format is 'X.Y', where 'X' and 'Y' are int values. "
+                    "Tempest selects tests based on the range between "
+                    "min_microversion and max_microversion. "
+                    "If both values are not specified, Tempest avoids tests "
+                    "which require a microversion. Valid values are string "
+                    "with format 'X.Y' or string 'latest'",
+                    deprecated_group='compute-feature-enabled'),
 ]
 
 compute_features_group = cfg.OptGroup(name='compute-feature-enabled',
@@ -328,6 +340,10 @@ ComputeFeaturesGroup = [
                 default=True,
                 help="Does the test environment support live migration "
                      "available?"),
+    cfg.BoolOpt('metadata_service',
+                default=True,
+                help="Does the test environment support metadata service? "
+                     "Ignored unless validation.run_validation=true."),
     cfg.BoolOpt('block_migration_for_live_migration',
                 default=False,
                 help="Does the test environment use block devices for live "
@@ -337,13 +353,6 @@ ComputeFeaturesGroup = [
                 help="Does the test environment block migration support "
                 "cinder iSCSI volumes. Note, libvirt doesn't support this, "
                 "see https://bugs.launchpad.net/nova/+bug/1398999"),
-    # TODO(gilliard): Remove live_migrate_paused_instances at juno-eol.
-    cfg.BoolOpt('live_migrate_paused_instances',
-                default=False,
-                help="Does the test system allow live-migration of paused "
-                "instances? Note, this is more than just the ANDing of "
-                "paused and live_migrate, but all 3 should be set to True "
-                "to run those tests"),
     cfg.BoolOpt('vnc_console',
                 default=False,
                 help='Enable VNC console. This configuration value should '
@@ -373,21 +382,31 @@ ComputeFeaturesGroup = [
                 default=True,
                 help='Does the test environment support creating snapshot '
                      'images of running instances?'),
-    cfg.BoolOpt('ec2_api',
-                default=True,
-                help='Does the test environment have the ec2 api running?'),
-    # TODO(mriedem): Remove preserve_ports once juno-eol happens.
-    cfg.BoolOpt('preserve_ports',
+    cfg.BoolOpt('nova_cert',
                 default=False,
-                help='Does Nova preserve preexisting ports from Neutron '
-                     'when deleting an instance? This should be set to True '
-                     'if testing Kilo+ Nova.'),
+                help='Does the test environment have the nova cert running?',
+                deprecated_for_removal=True),
+    cfg.BoolOpt('personality',
+                default=False,
+                help='Does the test environment support server personality'),
     cfg.BoolOpt('attach_encrypted_volume',
                 default=True,
                 help='Does the test environment support attaching an '
                      'encrypted volume to a running server instance? This may '
                      'depend on the combination of compute_driver in nova and '
                      'the volume_driver(s) in cinder.'),
+    cfg.BoolOpt('config_drive',
+                default=True,
+                help='Enable special configuration drive with metadata.'),
+    cfg.ListOpt('scheduler_available_filters',
+                default=['all'],
+                help="A list of enabled filters that nova will accept as hints"
+                     " to the scheduler when creating a server. A special "
+                     "entry 'all' indicates all filters are enabled. Empty "
+                     "list indicates all filters are disabled. The full "
+                     "available list of filters is in nova.conf: "
+                     "DEFAULT.scheduler_available_filters"),
+
 ]
 
 
@@ -420,7 +439,16 @@ ImageGroup = [
     cfg.IntOpt('build_interval',
                default=1,
                help="Time in seconds between image operation status "
-                    "checks.")
+                    "checks."),
+    cfg.ListOpt('container_formats',
+                default=['ami', 'ari', 'aki', 'bare', 'ovf', 'ova'],
+                help="A list of image's container formats "
+                     "users can specify."),
+    cfg.ListOpt('disk_formats',
+                default=['ami', 'ari', 'aki', 'vhd', 'vmdk', 'raw', 'qcow2',
+                         'vdi', 'iso'],
+                help="A list of image's disk formats "
+                     "users can specify.")
 ]
 
 image_feature_group = cfg.OptGroup(name='image-feature-enabled',
@@ -457,23 +485,28 @@ NetworkGroup = [
                choices=['public', 'admin', 'internal',
                         'publicURL', 'adminURL', 'internalURL'],
                help="The endpoint type to use for the network service."),
-    cfg.StrOpt('tenant_network_cidr',
+    cfg.StrOpt('project_network_cidr',
+               deprecated_name='tenant_network_cidr',
                default="10.100.0.0/16",
-               help="The cidr block to allocate tenant ipv4 subnets from"),
-    cfg.IntOpt('tenant_network_mask_bits',
+               help="The cidr block to allocate project ipv4 subnets from"),
+    cfg.IntOpt('project_network_mask_bits',
+               deprecated_name='tenant_network_mask_bits',
                default=28,
-               help="The mask bits for tenant ipv4 subnets"),
-    cfg.StrOpt('tenant_network_v6_cidr',
+               help="The mask bits for project ipv4 subnets"),
+    cfg.StrOpt('project_network_v6_cidr',
+               deprecated_name='tenant_network_v6_cidr',
                default="2003::/48",
-               help="The cidr block to allocate tenant ipv6 subnets from"),
-    cfg.IntOpt('tenant_network_v6_mask_bits',
+               help="The cidr block to allocate project ipv6 subnets from"),
+    cfg.IntOpt('project_network_v6_mask_bits',
+               deprecated_name='tenant_network_v6_mask_bits',
                default=64,
-               help="The mask bits for tenant ipv6 subnets"),
-    cfg.BoolOpt('tenant_networks_reachable',
+               help="The mask bits for project ipv6 subnets"),
+    cfg.BoolOpt('project_networks_reachable',
+                deprecated_name='tenant_networks_reachable',
                 default=False,
-                help="Whether tenant networks can be reached directly from "
+                help="Whether project networks can be reached directly from "
                      "the test client. This must be set to True when the "
-                     "'fixed' ssh_connect_method is selected."),
+                     "'fixed' connect_method is selected."),
     cfg.StrOpt('public_network_id',
                default="",
                help="Id of the public network that provides external "
@@ -505,6 +538,10 @@ NetworkGroup = [
                     " with pre-configured ports."
                     " Supported ports are:"
                     " ['normal','direct','macvtap']"),
+    cfg.ListOpt('default_network',
+                default=["1.0.0.0/16", "2.0.0.0/16"],
+                help="List of ip pools"
+                     " for subnetpools creation"),
 ]
 
 network_feature_group = cfg.OptGroup(name='network-feature-enabled',
@@ -532,41 +569,6 @@ NetworkFeaturesGroup = [
                      " port admin state"),
 ]
 
-messaging_group = cfg.OptGroup(name='messaging',
-                               title='Messaging Service')
-
-MessagingGroup = [
-    cfg.StrOpt('catalog_type',
-               default='messaging',
-               help='Catalog type of the Messaging service.'),
-    cfg.IntOpt('max_queues_per_page',
-               default=20,
-               help='The maximum number of queue records per page when '
-                    'listing queues'),
-    cfg.IntOpt('max_queue_metadata',
-               default=65536,
-               help='The maximum metadata size for a queue'),
-    cfg.IntOpt('max_messages_per_page',
-               default=20,
-               help='The maximum number of queue message per page when '
-                    'listing (or) posting messages'),
-    cfg.IntOpt('max_message_size',
-               default=262144,
-               help='The maximum size of a message body'),
-    cfg.IntOpt('max_messages_per_claim',
-               default=20,
-               help='The maximum number of messages per claim'),
-    cfg.IntOpt('max_message_ttl',
-               default=1209600,
-               help='The maximum ttl for a message'),
-    cfg.IntOpt('max_claim_ttl',
-               default=43200,
-               help='The maximum ttl for a claim'),
-    cfg.IntOpt('max_claim_grace',
-               default=43200,
-               help='The maximum grace period for a claim'),
-]
-
 validation_group = cfg.OptGroup(name='validation',
                                 title='SSH Validation options')
 
@@ -574,39 +576,89 @@ ValidationGroup = [
     cfg.BoolOpt('run_validation',
                 default=False,
                 help='Enable ssh on created servers and creation of additional'
-                     ' validation resources to enable remote access',
-                deprecated_opts=[cfg.DeprecatedOpt('run_ssh',
-                                                   group='compute')]),
+                     ' validation resources to enable remote access'),
+    cfg.BoolOpt('security_group',
+                default=True,
+                help='Enable/disable security groups.'),
+    cfg.BoolOpt('security_group_rules',
+                default=True,
+                help='Enable/disable security group rules.'),
     cfg.StrOpt('connect_method',
                default='floating',
                choices=['fixed', 'floating'],
                help='Default IP type used for validation: '
                     '-fixed: uses the first IP belonging to the fixed network '
-                    '-floating: creates and uses a floating IP'),
+                    '-floating: creates and uses a floating IP',
+               deprecated_opts=[cfg.DeprecatedOpt('use_floatingip_for_ssh',
+                                                  group='compute')]),
     cfg.StrOpt('auth_method',
                default='keypair',
                choices=['keypair'],
                help='Default authentication method to the instance. '
                     'Only ssh via keypair is supported for now. '
-                    'Additional methods will be handled in a separate spec.'),
+                    'Additional methods will be handled in a separate spec.',
+               deprecated_opts=[cfg.DeprecatedOpt('ssh_auth_method',
+                                                  group='compute')]),
     cfg.IntOpt('ip_version_for_ssh',
                default=4,
-               help='Default IP version for ssh connections.',
-               deprecated_opts=[cfg.DeprecatedOpt('ip_version_for_ssh',
-                                                  group='compute')]),
+               help='Default IP version for ssh connections.'),
     cfg.IntOpt('ping_timeout',
                default=120,
-               help='Timeout in seconds to wait for ping to succeed.'),
+               help='Timeout in seconds to wait for ping to succeed.',
+               deprecated_opts=[cfg.DeprecatedOpt('ping_timeout',
+                                                  group='compute')]),
     cfg.IntOpt('connect_timeout',
                default=60,
                help='Timeout in seconds to wait for the TCP connection to be '
-                    'successful.',
-               deprecated_opts=[cfg.DeprecatedOpt('ssh_channel_timeout',
-                                                  group='compute')]),
+                    'successful.'),
     cfg.IntOpt('ssh_timeout',
                default=300,
-               help='Timeout in seconds to wait for the ssh banner.',
-               deprecated_opts=[cfg.DeprecatedOpt('ssh_timeout',
+               help='Timeout in seconds to wait for the ssh banner.'),
+    cfg.StrOpt('image_ssh_user',
+               default="root",
+               help="User name used to authenticate to an instance.",
+               deprecated_opts=[cfg.DeprecatedOpt('image_ssh_user',
+                                                  group='compute'),
+                                cfg.DeprecatedOpt('ssh_user',
+                                                  group='compute'),
+                                cfg.DeprecatedOpt('ssh_user',
+                                                  group='scenario')]),
+    cfg.StrOpt('image_ssh_password',
+               default="password",
+               help="Password used to authenticate to an instance.",
+               deprecated_opts=[cfg.DeprecatedOpt('image_ssh_password',
+                                                  group='compute')]),
+    cfg.StrOpt('ssh_shell_prologue',
+               default="set -eu -o pipefail; PATH=$$PATH:/sbin;",
+               help="Shell fragments to use before executing a command "
+                    "when sshing to a guest.",
+               deprecated_opts=[cfg.DeprecatedOpt('ssh_shell_prologue',
+                                                  group='compute')]),
+    cfg.IntOpt('ping_size',
+               default=56,
+               help="The packet size for ping packets originating "
+                    "from remote linux hosts",
+               deprecated_opts=[cfg.DeprecatedOpt('ping_size',
+                                                  group='compute')]),
+    cfg.IntOpt('ping_count',
+               default=1,
+               help="The number of ping packets originating from remote "
+                    "linux hosts",
+               deprecated_opts=[cfg.DeprecatedOpt('ping_count',
+                                                  group='compute')]),
+    cfg.StrOpt('floating_ip_range',
+               default='10.0.0.0/29',
+               help='Unallocated floating IP range, which will be used to '
+                    'test the floating IP bulk feature for CRUD operation. '
+                    'This block must not overlap an existing floating IP '
+                    'pool.',
+               deprecated_opts=[cfg.DeprecatedOpt('floating_ip_range',
+                                                  group='compute')]),
+    cfg.StrOpt('network_for_ssh',
+               default='public',
+               help="Network used for SSH connections. Ignored if "
+                    "connect_method=floating.",
+               deprecated_opts=[cfg.DeprecatedOpt('network_for_ssh',
                                                   group='compute')]),
 ]
 
@@ -635,12 +687,10 @@ VolumeGroup = [
                choices=['public', 'admin', 'internal',
                         'publicURL', 'adminURL', 'internalURL'],
                help="The endpoint type to use for the volume service."),
-    cfg.StrOpt('backend1_name',
-               default='BACKEND_1',
-               help="Name of the backend1 (must be declared in cinder.conf)"),
-    cfg.StrOpt('backend2_name',
-               default='BACKEND_2',
-               help="Name of the backend2 (must be declared in cinder.conf)"),
+    cfg.ListOpt('backend_names',
+                default=['BACKEND_1', 'BACKEND_2'],
+                help='A list of backend names separated by comma. '
+                     'The backend name must be declared in cinder.conf'),
     cfg.StrOpt('storage_protocol',
                default='iSCSI',
                help='Backend protocol to target when creating volume types'),
@@ -653,6 +703,24 @@ VolumeGroup = [
     cfg.IntOpt('volume_size',
                default=1,
                help='Default size in GB for volumes created by volumes tests'),
+    cfg.StrOpt('min_microversion',
+               default=None,
+               help="Lower version of the test target microversion range. "
+                    "The format is 'X.Y', where 'X' and 'Y' are int values. "
+                    "Tempest selects tests based on the range between "
+                    "min_microversion and max_microversion. "
+                    "If both values are not specified, Tempest avoids tests "
+                    "which require a microversion. Valid values are string "
+                    "with format 'X.Y' or string 'latest'",),
+    cfg.StrOpt('max_microversion',
+               default=None,
+               help="Upper version of the test target microversion range. "
+                    "The format is 'X.Y', where 'X' and 'Y' are int values. "
+                    "Tempest selects tests based on the range between "
+                    "min_microversion and max_microversion. "
+                    "If both values are not specified, Tempest avoids tests "
+                    "which require a microversion. Valid values are string "
+                    "with format 'X.Y' or string 'latest'",),
 ]
 
 volume_feature_group = cfg.OptGroup(name='volume-feature-enabled',
@@ -668,6 +736,9 @@ VolumeFeaturesGroup = [
     cfg.BoolOpt('snapshot',
                 default=True,
                 help='Runs Cinder volume snapshot test'),
+    cfg.BoolOpt('clone',
+                default=True,
+                help='Runs Cinder volume clone test'),
     cfg.ListOpt('api_extensions',
                 default=['all'],
                 help='A list of enabled volume extensions with a special '
@@ -679,10 +750,18 @@ VolumeFeaturesGroup = [
     cfg.BoolOpt('api_v2',
                 default=True,
                 help="Is the v2 volume API enabled"),
-    cfg.BoolOpt('bootable',
+    cfg.BoolOpt('api_v3',
                 default=False,
+                help="Is the v3 volume API enabled"),
+    cfg.BoolOpt('bootable',
+                default=True,
                 help='Update bootable status of a volume '
-                     'Not implemented on icehouse ')
+                     'Not implemented on icehouse ',
+                deprecated_for_removal=True),
+    # TODO(ynesenenko): Remove volume_services once liberty-eol happens.
+    cfg.BoolOpt('volume_services',
+                default=False,
+                help='Extract correct host info from host@backend')
 ]
 
 
@@ -753,21 +832,6 @@ ObjectStoreFeaturesGroup = [
                 help="Execute discoverability tests"),
 ]
 
-database_group = cfg.OptGroup(name='database',
-                              title='Database Service Options')
-
-DatabaseGroup = [
-    cfg.StrOpt('catalog_type',
-               default='database',
-               help="Catalog type of the Database service."),
-    cfg.StrOpt('db_flavor_ref',
-               default="1",
-               help="Valid primary flavor to use in database tests."),
-    cfg.StrOpt('db_current_version',
-               default="v1.0",
-               help="Current database version to use in database tests."),
-]
-
 orchestration_group = cfg.OptGroup(name='orchestration',
                                    title='Orchestration Service Options')
 
@@ -808,111 +872,33 @@ OrchestrationGroup = [
                help="Value must match heat configuration of the same name."),
 ]
 
-
-telemetry_group = cfg.OptGroup(name='telemetry',
-                               title='Telemetry Service Options')
-
-TelemetryGroup = [
-    cfg.StrOpt('catalog_type',
-               default='metering',
-               help="Catalog type of the Telemetry service."),
-    cfg.StrOpt('endpoint_type',
-               default='publicURL',
-               choices=['public', 'admin', 'internal',
-                        'publicURL', 'adminURL', 'internalURL'],
-               help="The endpoint type to use for the telemetry service."),
-    cfg.BoolOpt('too_slow_to_test',
-                default=True,
-                help="This variable is used as flag to enable "
-                     "notification tests")
-]
-
-
-dashboard_group = cfg.OptGroup(name="dashboard",
-                               title="Dashboard options")
-
-DashboardGroup = [
-    cfg.StrOpt('dashboard_url',
-               default='http://localhost/',
-               help="Where the dashboard can be found"),
-    cfg.StrOpt('login_url',
-               default='http://localhost/auth/login/',
-               help="Login page for the dashboard"),
-]
-
-
-data_processing_group = cfg.OptGroup(name="data_processing",
+data_processing_group = cfg.OptGroup(name="data-processing",
                                      title="Data Processing options")
 
 DataProcessingGroup = [
     cfg.StrOpt('catalog_type',
-               default='data_processing',
+               default='data-processing',
+               deprecated_group="data_processing",
                help="Catalog type of the data processing service."),
     cfg.StrOpt('endpoint_type',
                default='publicURL',
                choices=['public', 'admin', 'internal',
                         'publicURL', 'adminURL', 'internalURL'],
+               deprecated_group="data_processing",
                help="The endpoint type to use for the data processing "
                     "service."),
 ]
 
 
 data_processing_feature_group = cfg.OptGroup(
-    name="data_processing-feature-enabled",
+    name="data-processing-feature-enabled",
     title="Enabled Data Processing features")
 
 DataProcessingFeaturesGroup = [
     cfg.ListOpt('plugins',
-                default=["vanilla", "hdp"],
+                default=["vanilla", "cdh"],
+                deprecated_group="data_processing-feature-enabled",
                 help="List of enabled data processing plugins")
-]
-
-
-boto_group = cfg.OptGroup(name='boto',
-                          title='EC2/S3 options')
-BotoGroup = [
-    cfg.StrOpt('ec2_url',
-               default="http://localhost:8773/services/Cloud",
-               help="EC2 URL"),
-    cfg.StrOpt('s3_url',
-               default="http://localhost:8080",
-               help="S3 URL"),
-    cfg.StrOpt('aws_secret',
-               help="AWS Secret Key",
-               secret=True),
-    cfg.StrOpt('aws_access',
-               help="AWS Access Key"),
-    cfg.StrOpt('aws_zone',
-               default="nova",
-               help="AWS Zone for EC2 tests"),
-    cfg.StrOpt('s3_materials_path',
-               default="/opt/stack/devstack/files/images/"
-                       "s3-materials/cirros-0.3.0",
-               help="S3 Materials Path"),
-    cfg.StrOpt('ari_manifest',
-               default="cirros-0.3.0-x86_64-initrd.manifest.xml",
-               help="ARI Ramdisk Image manifest"),
-    cfg.StrOpt('ami_manifest',
-               default="cirros-0.3.0-x86_64-blank.img.manifest.xml",
-               help="AMI Machine Image manifest"),
-    cfg.StrOpt('aki_manifest',
-               default="cirros-0.3.0-x86_64-vmlinuz.manifest.xml",
-               help="AKI Kernel Image manifest"),
-    cfg.StrOpt('instance_type',
-               default="m1.tiny",
-               help="Instance type"),
-    cfg.IntOpt('http_socket_timeout',
-               default=3,
-               help="boto Http socket timeout"),
-    cfg.IntOpt('num_retries',
-               default=1,
-               help="boto num_retries on error"),
-    cfg.IntOpt('build_timeout',
-               default=60,
-               help="Status Change Timeout"),
-    cfg.IntOpt('build_interval',
-               default=1,
-               help="Status Change Test Interval"),
 ]
 
 stress_group = cfg.OptGroup(name='stress', title='Stress Test Options')
@@ -949,7 +935,7 @@ StressGroup = [
                 default=False,
                 help='Allows a full cleaning process after a stress test.'
                      ' Caution : this cleanup will remove every objects of'
-                     ' every tenant.')
+                     ' every project.')
 ]
 
 
@@ -959,7 +945,8 @@ ScenarioGroup = [
     cfg.StrOpt('img_dir',
                default='/opt/stack/new/devstack/files/images/'
                'cirros-0.3.1-x86_64-uec',
-               help='Directory containing image files'),
+               help='Directory containing image files',
+               deprecated_for_removal=True),
     cfg.StrOpt('img_file', deprecated_name='qcow2_img_file',
                default='cirros-0.3.1-x86_64-disk.img',
                help='Image file name'),
@@ -973,25 +960,20 @@ ScenarioGroup = [
                 'Use for custom images which require them'),
     cfg.StrOpt('ami_img_file',
                default='cirros-0.3.1-x86_64-blank.img',
-               help='AMI image file name'),
+               help='AMI image file name',
+               deprecated_for_removal=True),
     cfg.StrOpt('ari_img_file',
                default='cirros-0.3.1-x86_64-initrd',
-               help='ARI image file name'),
+               help='ARI image file name',
+               deprecated_for_removal=True),
     cfg.StrOpt('aki_img_file',
                default='cirros-0.3.1-x86_64-vmlinuz',
-               help='AKI image file name'),
-    cfg.StrOpt('ssh_user',
-               default='cirros',
-               help='ssh username for the image file'),
-    cfg.IntOpt(
-        'large_ops_number',
-        default=0,
-        help="specifies how many resources to request at once. Used "
-        "for large operations testing."),
+               help='AKI image file name',
+               deprecated_for_removal=True),
     # TODO(yfried): add support for dhcpcd
     cfg.StrOpt('dhcp_client',
                default='udhcpc',
-               choices=["udhcpc", "dhclient"],
+               choices=["udhcpc", "dhclient", ""],
                help='DHCP client used by images to renew DCHP lease. '
                     'If left empty, update operation will be skipped. '
                     'Supported clients: "udhcpc", "dhclient"')
@@ -1020,24 +1002,12 @@ ServiceAvailableGroup = [
     cfg.BoolOpt('heat',
                 default=False,
                 help="Whether or not Heat is expected to be available"),
-    cfg.BoolOpt('ceilometer',
-                default=True,
-                help="Whether or not Ceilometer is expected to be available"),
-    cfg.BoolOpt('horizon',
-                default=True,
-                help="Whether or not Horizon is expected to be available"),
     cfg.BoolOpt('sahara',
                 default=False,
                 help="Whether or not Sahara is expected to be available"),
     cfg.BoolOpt('ironic',
                 default=False,
                 help="Whether or not Ironic is expected to be available"),
-    cfg.BoolOpt('trove',
-                default=False,
-                help="Whether or not Trove is expected to be available"),
-    cfg.BoolOpt('zaqar',
-                default=False,
-                help="Whether or not Zaqar is expected to be available"),
 ]
 
 debug_group = cfg.OptGroup(name="debug",
@@ -1068,23 +1038,28 @@ specify .* as the regex.
 
 input_scenario_group = cfg.OptGroup(name="input-scenario",
                                     title="Filters and values for"
-                                          " input scenarios")
+                                          " input scenarios[DEPRECATED]")
+
 
 InputScenarioGroup = [
     cfg.StrOpt('image_regex',
                default='^cirros-0.3.1-x86_64-uec$',
-               help="Matching images become parameters for scenario tests"),
+               help="Matching images become parameters for scenario tests",
+               deprecated_for_removal=True),
     cfg.StrOpt('flavor_regex',
                default='^m1.nano$',
-               help="Matching flavors become parameters for scenario tests"),
+               help="Matching flavors become parameters for scenario tests",
+               deprecated_for_removal=True),
     cfg.StrOpt('non_ssh_image_regex',
                default='^.*[Ww]in.*$',
                help="SSH verification in tests is skipped"
-                    "for matching images"),
+                    "for matching images",
+               deprecated_for_removal=True),
     cfg.StrOpt('ssh_user_regex',
                default="[[\"^.*[Cc]irros.*$\", \"cirros\"]]",
                help="List of user mapped to regex "
-                    "to matching image names."),
+                    "to matching image names.",
+               deprecated_for_removal=True),
 ]
 
 
@@ -1092,12 +1067,17 @@ baremetal_group = cfg.OptGroup(name='baremetal',
                                title='Baremetal provisioning service options',
                                help='When enabling baremetal tests, Nova '
                                     'must be configured to use the Ironic '
-                                    'driver. The following paremeters for the '
+                                    'driver. The following parameters for the '
                                     '[compute] section must be disabled: '
                                     'console_output, interface_attach, '
                                     'live_migration, pause, rescue, resize '
                                     'shelve, snapshot, and suspend')
 
+
+# NOTE(deva): Ironic tests have been ported to tempest.lib. New config options
+#             should be added to ironic/ironic_tempest_plugin/config.py.
+#             However, these options need to remain here for testing stable
+#             branches until Liberty release reaches EOL.
 BaremetalGroup = [
     cfg.StrOpt('catalog_type',
                default='baremetal',
@@ -1154,24 +1134,20 @@ _opts = [
     (compute_group, ComputeGroup),
     (compute_features_group, ComputeFeaturesGroup),
     (identity_group, IdentityGroup),
+    (service_clients_group, ServiceClientsGroup),
     (identity_feature_group, IdentityFeatureGroup),
     (image_group, ImageGroup),
     (image_feature_group, ImageFeaturesGroup),
     (network_group, NetworkGroup),
     (network_feature_group, NetworkFeaturesGroup),
-    (messaging_group, MessagingGroup),
     (validation_group, ValidationGroup),
     (volume_group, VolumeGroup),
     (volume_feature_group, VolumeFeaturesGroup),
     (object_storage_group, ObjectStoreGroup),
     (object_storage_feature_group, ObjectStoreFeaturesGroup),
-    (database_group, DatabaseGroup),
     (orchestration_group, OrchestrationGroup),
-    (telemetry_group, TelemetryGroup),
-    (dashboard_group, DashboardGroup),
     (data_processing_group, DataProcessingGroup),
     (data_processing_feature_group, DataProcessingFeaturesGroup),
-    (boto_group, BotoGroup),
     (stress_group, StressGroup),
     (scenario_group, ScenarioGroup),
     (service_available_group, ServiceAvailableGroup),
@@ -1184,8 +1160,12 @@ _opts = [
 
 
 def register_opts():
+    ext_plugins = plugins.TempestTestPluginManager()
+    # Register in-tree tempest config options
     for g, o in _opts:
         register_opt_group(_CONF, g, o)
+    # Call external plugin config option registration
+    ext_plugins.register_plugin_opts(_CONF)
 
 
 def list_opts():
@@ -1194,16 +1174,20 @@ def list_opts():
     The purpose of this is to allow tools like the Oslo sample config file
     generator to discover the options exposed to users.
     """
-    return [(getattr(g, 'name', None), o) for g, o in _opts]
+    ext_plugins = plugins.TempestTestPluginManager()
+    # Make a shallow copy of the options list that can be
+    # extended by plugins. Send back the group object
+    # to allow group help text to be generated.
+    opt_list = [(g, o) for g, o in _opts]
+    opt_list.extend(ext_plugins.get_plugin_options_list())
+    return opt_list
 
 
 # this should never be called outside of this class
 class TempestConfigPrivate(object):
     """Provides OpenStack configuration information."""
 
-    DEFAULT_CONFIG_DIR = os.path.join(
-        os.path.abspath(os.path.dirname(os.path.dirname(__file__))),
-        "etc")
+    DEFAULT_CONFIG_DIR = os.path.join(os.getcwd(), "etc")
 
     DEFAULT_CONFIG_FILE = "tempest.conf"
 
@@ -1216,6 +1200,7 @@ class TempestConfigPrivate(object):
         self.compute = _CONF.compute
         self.compute_feature_enabled = _CONF['compute-feature-enabled']
         self.identity = _CONF.identity
+        self.service_clients = _CONF['service-clients']
         self.identity_feature_enabled = _CONF['identity-feature-enabled']
         self.image = _CONF.image
         self.image_feature_enabled = _CONF['image-feature-enabled']
@@ -1227,15 +1212,10 @@ class TempestConfigPrivate(object):
         self.object_storage = _CONF['object-storage']
         self.object_storage_feature_enabled = _CONF[
             'object-storage-feature-enabled']
-        self.database = _CONF.database
         self.orchestration = _CONF.orchestration
-        self.messaging = _CONF.messaging
-        self.telemetry = _CONF.telemetry
-        self.dashboard = _CONF.dashboard
-        self.data_processing = _CONF.data_processing
+        self.data_processing = _CONF['data-processing']
         self.data_processing_feature_enabled = _CONF[
-            'data_processing-feature-enabled']
-        self.boto = _CONF.boto
+            'data-processing-feature-enabled']
         self.stress = _CONF.stress
         self.scenario = _CONF.scenario
         self.service_available = _CONF.service_available
@@ -1243,10 +1223,7 @@ class TempestConfigPrivate(object):
         self.baremetal = _CONF.baremetal
         self.input_scenario = _CONF['input-scenario']
         self.negative = _CONF.negative
-        _CONF.set_default('domain_name', self.identity.admin_domain_name,
-                          group='identity')
-        _CONF.set_default('alt_domain_name', self.identity.admin_domain_name,
-                          group='identity')
+        logging.tempest_set_log_file('tempest.log')
 
     def __init__(self, parse_conf=True, config_path=None):
         """Initialize a configuration from a conf directory and conf file."""
@@ -1277,6 +1254,14 @@ class TempestConfigPrivate(object):
             _CONF([], project='tempest', default_config_files=config_files)
         else:
             _CONF([], project='tempest')
+
+        logging_cfg_path = "%s/logging.conf" % os.path.dirname(path)
+        if ((not hasattr(_CONF, 'log_config_append') or
+            _CONF.log_config_append is None) and
+            os.path.isfile(logging_cfg_path)):
+            # if logging conf is in place we need to set log_config_append
+            _CONF.log_config_append = logging_cfg_path
+
         logging.setup(_CONF, 'tempest')
         LOG = logging.getLogger('tempest')
         LOG.info("Using tempest config file %s" % path)
@@ -1303,7 +1288,18 @@ class TempestConfigProxy(object):
     def __getattr__(self, attr):
         if not self._config:
             self._fix_log_levels()
+            lock_dir = os.path.join(tempfile.gettempdir(), 'tempest-lock')
+            lockutils.set_defaults(lock_dir)
             self._config = TempestConfigPrivate(config_path=self._path)
+
+            # Pushing tempest internal service client configuration to the
+            # service clients register. Doing this in the config module ensures
+            # that the configuration is available by the time we register the
+            # service clients.
+            # NOTE(andreaf) This has to be done at the time the first
+            # attribute is accessed, to ensure all plugins have been already
+            # loaded, options registered, and _config is set.
+            _register_tempest_service_clients()
 
         return getattr(self._config, attr)
 
@@ -1312,3 +1308,181 @@ class TempestConfigProxy(object):
 
 
 CONF = TempestConfigProxy()
+
+
+def skip_unless_config(*args):
+    """Decorator to raise a skip if a config opt doesn't exist or is False
+
+    :param str group: The first arg, the option group to check
+    :param str name: The second arg, the option name to check
+    :param str msg: Optional third arg, the skip msg to use if a skip is raised
+    :raises testtools.TestCaseskipException: If the specified config option
+        doesn't exist or it exists and evaluates to False
+    """
+    def decorator(f):
+        group = args[0]
+        name = args[1]
+
+        @functools.wraps(f)
+        def wrapper(self, *func_args, **func_kwargs):
+            if not hasattr(CONF, group):
+                msg = "Config group %s doesn't exist" % group
+                raise testtools.TestCase.skipException(msg)
+
+            conf_group = getattr(CONF, group)
+            if not hasattr(conf_group, name):
+                msg = "Config option %s.%s doesn't exist" % (group,
+                                                             name)
+                raise testtools.TestCase.skipException(msg)
+
+            value = getattr(conf_group, name)
+            if not value:
+                if len(args) == 3:
+                    msg = args[2]
+                else:
+                    msg = "Config option %s.%s is false" % (group,
+                                                            name)
+                raise testtools.TestCase.skipException(msg)
+            return f(self, *func_args, **func_kwargs)
+        return wrapper
+    return decorator
+
+
+def skip_if_config(*args):
+    """Raise a skipException if a config exists and is True
+
+    :param str group: The first arg, the option group to check
+    :param str name: The second arg, the option name to check
+    :param str msg: Optional third arg, the skip msg to use if a skip is raised
+    :raises testtools.TestCase.skipException: If the specified config option
+        exists and evaluates to True
+    """
+    def decorator(f):
+        group = args[0]
+        name = args[1]
+
+        @functools.wraps(f)
+        def wrapper(self, *func_args, **func_kwargs):
+            if hasattr(CONF, group):
+                conf_group = getattr(CONF, group)
+                if hasattr(conf_group, name):
+                    value = getattr(conf_group, name)
+                    if value:
+                        if len(args) == 3:
+                            msg = args[2]
+                        else:
+                            msg = "Config option %s.%s is false" % (group,
+                                                                    name)
+                        raise testtools.TestCase.skipException(msg)
+            return f(self, *func_args, **func_kwargs)
+        return wrapper
+    return decorator
+
+
+def service_client_config(service_client_name=None):
+    """Return a dict with the parameters to init service clients
+
+    Extracts from CONF the settings specific to the service_client_name and
+    api_version, and formats them as dict ready to be passed to the service
+    clients __init__:
+
+        * `region` (default to identity)
+        * `catalog_type`
+        * `endpoint_type`
+        * `build_timeout` (object-storage and identity default to compute)
+        * `build_interval` (object-storage and identity default to compute)
+
+    The following common settings are always returned, even if
+    `service_client_name` is None:
+
+        * `disable_ssl_certificate_validation`
+        * `ca_certs`
+        * `trace_requests`
+        * `http_timeout`
+
+    The dict returned by this does not fit a few service clients:
+
+        * The endpoint type is not returned for identity client, since it takes
+          three different values for v2 admin, v2 public and v3
+        * The `ServersClient` from compute accepts an optional
+          `enable_instance_password` parameter, which is not returned.
+        * The `VolumesClient` for both v1 and v2 volume accept an optional
+          `default_volume_size` parameter, which is not returned.
+        * The `TokenClient` and `V3TokenClient` have a very different
+          interface, only auth_url is needed for them.
+
+    :param service_client_name: str Name of the service. Supported values are
+        'compute', 'identity', 'image', 'network', 'object-storage', 'volume'
+    :return: dictionary of __init__ parameters for the service clients
+    :rtype: dict
+    """
+    _parameters = {
+        'disable_ssl_certificate_validation':
+            CONF.service_clients.disable_ssl_certificate_validation,
+        'ca_certs': CONF.service_clients.ca_certificates_file,
+        'trace_requests': CONF.debug.trace_requests,
+        'http_timeout': CONF.service_clients.http_timeout
+    }
+
+    if service_client_name is None:
+        return _parameters
+
+    # Get the group of options first, by normalising the service_group_name
+    # Services with a '-' in the name have an '_' in the option group name
+    config_group = service_client_name.replace('-', '_')
+    # NOTE(andreaf) Check if the config group exists. This allows for this
+    # helper to be used for settings from registered plugins as well
+    try:
+        options = getattr(CONF, config_group)
+    except cfg.NoSuchOptError:
+        # Option group not defined
+        raise exceptions.UnknownServiceClient(services=service_client_name)
+    # Set endpoint_type
+    # Identity uses different settings depending on API version, so do not
+    # return the endpoint at all.
+    if service_client_name != 'identity':
+        _parameters['endpoint_type'] = getattr(options, 'endpoint_type')
+    # Set build_*
+    # Object storage and identity groups do not have conf settings for
+    # build_* parameters, and we default to compute in any case
+    for setting in ['build_timeout', 'build_interval']:
+        if not hasattr(options, setting) or not getattr(options, setting):
+            _parameters[setting] = getattr(CONF.compute, setting)
+        else:
+            _parameters[setting] = getattr(options, setting)
+    # Set region
+    # If a service client does not define region or region is not set
+    # default to the identity region
+    if not hasattr(options, 'region') or not getattr(options, 'region'):
+        _parameters['region'] = CONF.identity.region
+    else:
+        _parameters['region'] = getattr(options, 'region')
+    # Set service
+    _parameters['service'] = getattr(options, 'catalog_type')
+    return _parameters
+
+
+def _register_tempest_service_clients():
+    # Register tempest own service clients using the same mechanism used
+    # for external plugins.
+    # The configuration data is pushed to the registry so that automatic
+    # configuration of tempest own service clients is possible both for
+    # tempest as well as for the plugins.
+    service_clients = clients.tempest_modules()
+    registry = clients.ClientsRegistry()
+    all_clients = []
+    for service_client in service_clients:
+        module = service_clients[service_client]
+        configs = service_client.split('.')[0]
+        service_client_data = dict(
+            name=service_client.replace('.', '_'),
+            service_version=service_client,
+            module_path=module.__name__,
+            client_names=module.__all__,
+            **service_client_config(configs)
+        )
+        all_clients.append(service_client_data)
+    # NOTE(andreaf) Internal service clients do not actually belong
+    # to a plugin, so using '__tempest__' to indicate a virtual plugin
+    # which holds internal service clients.
+    registry.register_service_client('__tempest__', all_clients)

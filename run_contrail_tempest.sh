@@ -32,6 +32,8 @@ coverage=0
 wrapper=""
 config_file=""
 update=0
+result_xml="result.xml"
+populate_config=0
 
 if ! options=$(getopt -o VNnfusthdC:pr: -l virtual-env,no-virtual-env,no-site-packages,force,update,smoke,serial,help,debug,config:,populate-config,result-xml: -- "$@")
 then
@@ -98,7 +100,7 @@ function run_tests {
       echo Executing $testrargs with $wrapper
       ${wrapper} testr run --subunit $testrargs | ${wrapper} subunit2junitxml -f -o $result_xml
   else
-      ${wrapper} testr run --parallel --subunit $testrargs | ${wrapper} subunit-trace -n -f
+      ${wrapper} testr run --parallel --subunit $testrargs | ${wrapper} subunit2junitxml -f -o $result_xml
   fi
 }
 
