@@ -1,0 +1,13 @@
+diff --git a/tempest/api/compute/servers/test_attach_interfaces.py b/tempest/api/compute/servers/test_attach_interfaces.py
+index 396327b..24185d8 100644
+--- a/tempest/api/compute/servers/test_attach_interfaces.py
++++ b/tempest/api/compute/servers/test_attach_interfaces.py
+@@ -117,6 +117,7 @@ class AttachInterfacesTestJSON(base.BaseV2ComputeTest):
+         # NOTE(danms): delete not the first or last, but one in the middle
+         iface = ifs[1]
+         self.client.delete_interface(server['id'], iface['port_id'])
++        time.sleep(5)
+         _ifs = self.client.list_interfaces(server['id'])
+         start = int(time.time())
+ 
+
