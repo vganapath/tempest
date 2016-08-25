@@ -55,7 +55,7 @@ function get_image_id() {
             `wget $image_path --no-check-certificate`
         fi
         #TODO, this only works for liberty and mitaka, need to run it for all scenarios
-        export OS_IMAGE_URL=http://${keystone_host}:9292/ && ${with_venv} glance image-create --name $image_name --disk-format qcow2 --container-format bare  --file $image_filename --visibility public > /dev/null
+        export OS_IMAGE_URL=http://${keystone_host}:9292/ && ${with_venv} glance image-create --name $image_name --disk-format qcow2 --container-format bare --is-public True --file $image_filename > /dev/null
         image_id=`${with_venv} nova image-list | grep " $image_name "  | awk {'print $2'}`
     fi
     echo $image_id
