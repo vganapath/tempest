@@ -22,6 +22,7 @@ from tempest.common.utils import data_utils
 from tempest import config
 from tempest.lib.common.utils import test_utils
 from tempest.lib import exceptions as lib_exc
+from tempest.lib import decorators
 from tempest import test
 
 CONF = config.CONF
@@ -328,6 +329,7 @@ class NetworksTest(base.BaseNetworkTest):
     def test_create_delete_subnet_with_dhcp_enabled(self):
         self._create_verify_delete_subnet(enable_dhcp=True)
 
+    @decorators.skip_because(bug="1617403")
     @test.idempotent_id('3d3852eb-3009-49ec-97ac-5ce83b73010a')
     def test_update_subnet_gw_dns_host_routes_dhcp(self):
         network = self.create_network()
